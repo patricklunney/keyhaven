@@ -9,8 +9,9 @@ resource "aws_db_parameter_group" "this" {
   name   = "${var.name}-pg17"
   family = "postgres17"
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot" # how RDS reports it; avoids a perpetual diff
   }
 }
 
@@ -37,7 +38,7 @@ resource "aws_db_instance" "this" {
   publicly_accessible    = false
   multi_az               = var.db_multi_az
 
-  backup_retention_period    = 7
+  backup_retention_period    = var.db_backup_retention_days
   deletion_protection        = var.deletion_protection
   skip_final_snapshot        = !var.deletion_protection
   final_snapshot_identifier  = var.deletion_protection ? "${var.name}-final" : null

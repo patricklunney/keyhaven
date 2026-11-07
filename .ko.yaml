@@ -1,0 +1,15 @@
+# Docker-free image builds: `ko build ./cmd/keyhaven`
+# Distroless static base, runs as non-root (uid 65532). ko puts the binary
+# at /ko-app/keyhaven and adds /ko-app to PATH.
+defaultBaseImage: gcr.io/distroless/static-debian12:nonroot
+defaultPlatforms:
+  - linux/arm64
+builds:
+  - id: keyhaven
+    main: ./cmd/keyhaven
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w

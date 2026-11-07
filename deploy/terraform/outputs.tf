@@ -25,7 +25,19 @@ output "register_client_command" {
   value = join(" ", [
     "aws ecs run-task --region ${var.region} --cluster ${aws_ecs_cluster.this.name}",
     "--launch-type FARGATE --task-definition ${aws_ecs_task_definition.app.family}",
-    "--network-configuration 'awsvpcConfiguration={subnets=[${join(",", aws_subnet.private[*].id)}],securityGroups=[${aws_security_group.app.id}]}'",
+    "--network-configuration 'awsvpcConfiguration={subnets=[${join(",", local.task_subnet_ids)}],securityGroups=[${aws_security_group.app.id}],assignPublicIp=${local.task_public_ip ? "ENABLED" : "DISABLED"}}'",
     "--overrides '{\"containerOverrides\":[{\"name\":\"keyhaven\",\"command\":[\"client\",\"create\",\"--name\",\"My App\",\"--redirect-uri\",\"https://app.example.com/callback\"]}]}'",
   ])
+}
+
+output "db_instance_id" {
+  value = aws_db_instance.this.identifier
+}
+
+output "desired_count" {
+  value = var.desired_count
+}
+
+output "max_count" {
+  value = var.max_count
 }

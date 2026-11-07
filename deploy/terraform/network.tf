@@ -42,7 +42,11 @@ resource "aws_route_table_association" "public" {
 }
 
 locals {
-  nat_count = var.single_nat_gateway ? 1 : length(local.azs)
+  nat_count = var.cost_optimized ? 0 : (var.single_nat_gateway ? 1 : length(local.azs))
+  # Where Fargate tasks run. Without a NAT gateway they need public IPs to reach
+  # ECR, Secrets Manager and CloudWatch.
+  task_subnet_ids = var.cost_optimized ? aws_subnet.public[*].id : aws_subnet.private[*].id
+  task_public_ip  = var.cost_optimized
 }
 
 resource "aws_eip" "nat" {
@@ -60,9 +64,14 @@ resource "aws_nat_gateway" "this" {
 resource "aws_route_table" "private" {
   count  = length(local.azs)
   vpc_id = aws_vpc.this.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this[var.single_nat_gateway ? 0 : count.index].id
+  # No default route when cost_optimized: only the database lives here then,
+  # and it needs no internet access.
+  dynamic "route" {
+    for_each = var.cost_optimized ? [] : [1]
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.this[var.single_nat_gateway ? 0 : count.index].id
+    }
   }
   tags = { Name = "${var.name}-private-${local.azs[count.index]}" }
 }
@@ -76,13 +85,17 @@ resource "aws_route_table_association" "private" {
 # ---------------------------------------------------------------- security groups
 
 resource "aws_security_group" "alb" {
+  count = local.use_alb ? 1 : 0
+
   name        = "${var.name}-alb"
   description = "Public HTTPS ingress to the load balancer"
   vpc_id      = aws_vpc.this.id
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_https" {
-  security_group_id = aws_security_group.alb.id
+  count = local.use_alb ? 1 : 0
+
+  security_group_id = aws_security_group.alb[0].id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 443
   to_port           = 443
@@ -90,7 +103,9 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
-  security_group_id = aws_security_group.alb.id
+  count = local.use_alb ? 1 : 0
+
+  security_group_id = aws_security_group.alb[0].id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 80
   to_port           = 80
@@ -99,7 +114,9 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_to_app" {
-  security_group_id            = aws_security_group.alb.id
+  count = local.use_alb ? 1 : 0
+
+  security_group_id            = aws_security_group.alb[0].id
   referenced_security_group_id = aws_security_group.app.id
   from_port                    = 8080
   to_port                      = 8080
@@ -113,8 +130,10 @@ resource "aws_security_group" "app" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "app_from_alb" {
+  count = local.use_alb ? 1 : 0
+
   security_group_id            = aws_security_group.app.id
-  referenced_security_group_id = aws_security_group.alb.id
+  referenced_security_group_id = aws_security_group.alb[0].id
   from_port                    = 8080
   to_port                      = 8080
   ip_protocol                  = "tcp"

@@ -1,3 +1,8 @@
+locals {
+  use_alb = var.ingress == "alb"
+  use_api = var.ingress == "api_gateway"
+}
+
 resource "aws_acm_certificate" "this" {
   domain_name       = var.domain_name
   validation_method = "DNS"
@@ -28,10 +33,12 @@ resource "aws_acm_certificate_validation" "this" {
 }
 
 resource "aws_lb" "this" {
+  count = local.use_alb ? 1 : 0
+
   name                       = var.name
   load_balancer_type         = "application"
   internal                   = false
-  security_groups            = [aws_security_group.alb.id]
+  security_groups            = [aws_security_group.alb[0].id]
   subnets                    = aws_subnet.public[*].id
   drop_invalid_header_fields = true
   enable_deletion_protection = var.deletion_protection
@@ -39,6 +46,8 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "app" {
+  count = local.use_alb ? 1 : 0
+
   name                 = "${var.name}-app"
   port                 = 8080
   protocol             = "HTTP"
@@ -57,7 +66,9 @@ resource "aws_lb_target_group" "app" {
 }
 
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.this.arn
+  count = local.use_alb ? 1 : 0
+
+  load_balancer_arn = aws_lb.this[0].arn
   port              = 80
   protocol          = "HTTP"
   default_action {
@@ -71,14 +82,16 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
-  load_balancer_arn = aws_lb.this.arn
+  count = local.use_alb ? 1 : 0
+
+  load_balancer_arn = aws_lb.this[0].arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = aws_acm_certificate_validation.this.certificate_arn
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.app.arn
+    target_group_arn = aws_lb_target_group.app[0].arn
   }
 }
 
@@ -88,8 +101,8 @@ resource "aws_route53_record" "app" {
   name     = var.domain_name
   type     = each.value
   alias {
-    name                   = aws_lb.this.dns_name
-    zone_id                = aws_lb.this.zone_id
-    evaluate_target_health = true
+    name                   = local.use_alb ? aws_lb.this[0].dns_name : aws_apigatewayv2_domain_name.this[0].domain_name_configuration[0].target_domain_name
+    zone_id                = local.use_alb ? aws_lb.this[0].zone_id : aws_apigatewayv2_domain_name.this[0].domain_name_configuration[0].hosted_zone_id
+    evaluate_target_health = local.use_alb
   }
 }

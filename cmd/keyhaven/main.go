@@ -28,6 +28,7 @@ Usage:
   keyhaven serve                       Run the HTTP server (applies migrations first)
   keyhaven migrate                     Apply database migrations and exit
   keyhaven genkey                      Print a new ES256 signing key (PEM)
+  keyhaven healthcheck                 Exit 0 if the local server's /healthz is OK (container health checks)
   keyhaven client create [flags]       Register an OIDC client
       --name NAME                      Display name (required)
       --redirect-uri URI               Allowed redirect URI (repeatable, required)
@@ -55,6 +56,8 @@ func main() {
 		err = serve(log)
 	case "migrate":
 		err = withStore(func(ctx context.Context, st *store.Store) error { return st.Migrate(ctx) })
+	case "healthcheck":
+		err = healthcheck()
 	case "genkey":
 		var k string
 		if k, err = tokens.GenerateKeyPEM(); err == nil {
@@ -314,4 +317,27 @@ func userCmd(args []string) error {
 		return withStore(func(ctx context.Context, st *store.Store) error { return st.DeleteUser(ctx, args[1]) })
 	}
 	return fmt.Errorf("unknown user subcommand %q", args[0])
+}
+
+// healthcheck probes the local server. The image has no shell or curl, so ECS
+// container health checks run this instead (needed when there's no load
+// balancer doing health checks).
+func healthcheck() error {
+	addr := os.Getenv("KEYHAVEN_LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	res, err := client.Get("http://" + addr + "/healthz")
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz returned %d", res.StatusCode)
+	}
+	return nil
 }

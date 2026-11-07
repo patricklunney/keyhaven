@@ -10,8 +10,8 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 
 # Distroless: no shell, no package manager, runs as non-root (uid 65532).
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/keyhaven /keyhaven
+COPY --from=build /out/keyhaven /usr/local/bin/keyhaven
 EXPOSE 8080
 USER nonroot:nonroot
-ENTRYPOINT ["/keyhaven"]
+ENTRYPOINT ["keyhaven"]
 CMD ["serve"]

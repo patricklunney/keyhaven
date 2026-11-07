@@ -68,6 +68,52 @@ variable "vpc_cidr" {
   default     = "10.40.0.0/16"
 }
 
+variable "ingress" {
+  description = "How traffic reaches the tasks: \"alb\" (Application Load Balancer, ~$30/month) or \"api_gateway\" (HTTP API + VPC link + Cloud Map, ~$0 at low traffic; no WAF support)."
+  type        = string
+  default     = "alb"
+  validation {
+    condition     = contains(["alb", "api_gateway"], var.ingress)
+    error_message = "ingress must be \"alb\" or \"api_gateway\"."
+  }
+}
+
+variable "api_rate_limit" {
+  description = "Steady-state requests per second allowed through API Gateway (api_gateway ingress only)."
+  type        = number
+  default     = 20
+}
+
+variable "api_burst_limit" {
+  description = "Burst capacity for API Gateway throttling (api_gateway ingress only)."
+  type        = number
+  default     = 40
+}
+
+variable "fargate_spot" {
+  description = "Run tasks on Fargate Spot (~70% cheaper; AWS may interrupt tasks with 2 minutes' notice). Good for POCs."
+  type        = bool
+  default     = false
+}
+
+variable "container_insights" {
+  description = "Enable ECS Container Insights (extra CloudWatch metrics, a few $/month)."
+  type        = bool
+  default     = true
+}
+
+variable "db_backup_retention_days" {
+  description = "Days of automated RDS backups (1-35)."
+  type        = number
+  default     = 7
+}
+
+variable "cost_optimized" {
+  description = "Skip the NAT gateway (~$37/month) by running tasks in public subnets with public IPs. Tasks still accept traffic only from the load balancer; the database stays private. Overrides single_nat_gateway."
+  type        = bool
+  default     = false
+}
+
 variable "single_nat_gateway" {
   description = "Use one NAT gateway (cheaper) instead of one per AZ (more resilient)."
   type        = bool

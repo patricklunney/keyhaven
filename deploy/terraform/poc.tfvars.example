@@ -1,0 +1,21 @@
+# Proof-of-concept setup: about $22/month running, about $4/month paused
+# (see `make poc-pause`). Copy these lines into terraform.tfvars alongside
+# domain_name and hosted_zone_id. Not for production: one Spot task can be
+# interrupted, there's no WAF, and the database has a single day of backups.
+ingress                  = "api_gateway" # no load balancer (saves ~$30)
+cost_optimized           = true          # no NAT gateway (saves ~$37)
+fargate_spot             = true          # ~70% cheaper compute
+desired_count            = 1
+max_count                = 1
+enable_waf               = false # HTTP APIs don't support WAF anyway
+container_insights       = false
+log_retention_days       = 7
+db_backup_retention_days = 1
+db_multi_az              = false
+deletion_protection      = false # easy teardown with `terraform destroy`
+
+# Security
+api_rate_limit       = 5     # requests/sec across all callers; caps worst-case API Gateway cost at ~$13/month
+api_burst_limit      = 10
+generate_signing_key = false # keep the token-signing key out of Terraform state; load it with `make signing-key`
+# allow_signup: leave true until you've created your account(s), then set false and re-apply.

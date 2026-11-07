@@ -1,0 +1,7 @@
+# Lowest-cost setup (~$60/month in us-east-1). Copy into terraform.tfvars
+# alongside domain_name and hosted_zone_id. Trade-offs are explained in the README.
+cost_optimized      = true  # no NAT gateway; tasks get public IPs (saves ~$30)
+desired_count       = 1     # one task; brief downtime on crashes/deploys (saves ~$7)
+enable_waf          = false # no WAF rate limiting (saves ~$8)
+db_multi_az         = false
+deletion_protection = true

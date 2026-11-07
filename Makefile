@@ -1,4 +1,4 @@
-.PHONY: build test e2e run db db-stop admin tf-validate
+.PHONY: build test e2e run db db-stop admin tf-validate poc-pause poc-resume poc-status signing-key
 
 PG_BIN  ?= $(shell pg_config --bindir 2>/dev/null || echo /opt/homebrew/opt/postgresql@17/bin)
 DEV_DB  ?= postgres://postgres@localhost:55433/keyhaven?sslmode=disable
@@ -40,3 +40,17 @@ admin:
 
 tf-validate:
 	cd deploy/terraform && terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate
+
+# Proof-of-concept deployments: stop paying for compute and the database between demos.
+poc-pause:
+	scripts/poc.sh pause
+
+poc-resume:
+	scripts/poc.sh resume
+
+poc-status:
+	scripts/poc.sh status
+
+# Generate the token-signing key straight into Secrets Manager (when generate_signing_key = false).
+signing-key:
+	scripts/signing-key.sh

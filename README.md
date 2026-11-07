@@ -242,11 +242,82 @@ aws secretsmanager put-secret-value --secret-id keyhaven/signing-key \
   --secret-string "$(keyhaven genkey)"
 ```
 
-### Rough cost (us-east-1, defaults)
+### Cost
 
-About $90–110/month: 2 small Fargate ARM tasks, a db.t4g.micro, one NAT gateway, the ALB
-and the WAF. `db_multi_az = true` and `single_nat_gateway = false` add resilience at
-extra cost.
+Approximate monthly cost in us-east-1 at light traffic, from AWS list prices. Check the
+[AWS Pricing Calculator](https://calculator.aws/) for current figures.
+
+| Resource | POC (`poc.tfvars.example`) | Budget (`budget.tfvars.example`) | Default | Hardened (`example.tfvars`) |
+|---|---|---|---|---|
+| NAT gateway(s) + IP | — | — | ~$37 | ~$74 (one per AZ) |
+| Ingress | ~$0–1 (API Gateway, Cloud Map) | ~$30 (load balancer) | ~$30 | ~$30 |
+| Fargate tasks (0.25 vCPU / 0.5 GB, ARM) | ~$6 (1 Spot task + public IP) | ~$11 (1 task + public IP) | ~$14.50 (2 tasks) | ~$14.50 (2 tasks) |
+| RDS Postgres db.t4g.micro + 20 GB | ~$14 | ~$14 | ~$14 | ~$28 (Multi-AZ) |
+| WAF | — | — | ~$8 | ~$8 |
+| Logs, Secrets Manager, ECR, DNS | ~$2 | ~$4–6 | ~$4–6 | ~$4–6 |
+| **Total** | **~$22 (~$4 paused)** | **~$60** | **~$105–115** | **~$160** |
+
+Traffic adds little: each sign-in costs a fraction of a cent, and autoscaling adds about $7 per extra task.
+
+**`cost_optimized = true`** removes the NAT gateway, the biggest fixed cost. Tasks run in
+the public subnets with public IPs instead, so they can reach ECR, Secrets Manager and CloudWatch
+directly. Their security group still accepts traffic only from the load balancer, and the
+database stays in private subnets with no internet route. The trade-offs: tasks have public IPs
+(unreachable, but visible), and outbound traffic leaves from task IPs rather than one stable NAT
+address, which matters only if something downstream allowlists your IP.
+
+### Proof of concept (`poc.tfvars.example`)
+
+The cheapest setup that still runs on your own domain with HTTPS:
+
+- **No load balancer:** `ingress = "api_gateway"` puts an API Gateway HTTP API in front of the
+  tasks, reaching them through a VPC link and AWS Cloud Map service discovery. You pay per
+  request (about $1 per million) instead of about $30/month. ECS checks task health itself
+  with `keyhaven healthcheck` and replaces a task that fails it. Cloud Map health gating isn't
+  enabled; with a single task it would make no difference. The default `execute-api` URL is disabled, so the issuer domain is the only way in.
+- **Fargate Spot:** `fargate_spot = true` runs one task about 70% cheaper. AWS can reclaim it
+  with 2 minutes' notice; ECS starts a replacement automatically, with a short outage.
+- No NAT gateway, no WAF (HTTP APIs can't use one; API Gateway throttling limits request rates
+  instead), Container Insights off, 7-day logs, 1 day of database backups, and deletion
+  protection off so `terraform destroy` removes everything.
+
+**Deploy order for the POC.** `poc.tfvars.example` sets `generate_signing_key = false`, which keeps the
+token-signing key out of Terraform state. The key has to exist before the service starts:
+
+```sh
+cd deploy/terraform
+terraform apply -target=aws_ecr_repository.this -target=aws_secretsmanager_secret.signing_key
+ko build ./cmd/keyhaven --bare --tags v0.1.0     # with KO_DOCKER_REPO=<ecr_repository_url>; see .ko.yaml
+make -C ../.. signing-key                        # generates the key straight into Secrets Manager
+terraform apply                                  # everything else
+```
+
+**POC security posture.** Nothing is reachable from the internet except API Gateway on your HTTPS
+domain: there are no open security-group rules, the database is private and encrypted, and the
+default `execute-api` URL is disabled. Tasks run read-only, as a non-root user, with every Linux
+capability dropped. API Gateway access logs (`/apigateway/keyhaven`) record each caller's real IP.
+Known POC trade-offs:
+- **Shared throttle:** the 5 requests/second limit applies to all callers together, so one client
+  can slow the service for everyone. It also caps the cost of a flood.
+- **No WAF.**
+- **Open sign-up:** set `allow_signup = false` once your accounts exist.
+- **Unverified database certificate:** the database connection is encrypted with TLS, but the
+  server certificate isn't verified (`sslmode=require`).
+
+**Pause between demos.** Most of the remaining cost is the database and the task. Pausing stops
+both, bringing the cost to about $4/month:
+
+```sh
+make poc-pause    # scale to 0 tasks, stop the database
+make poc-resume   # start the database, bring the task back (~5 minutes)
+make poc-status
+```
+
+AWS restarts a stopped RDS instance automatically after 7 days, so pause again if you're away longer.
+A later `terraform apply` restores the normal task count.
+
+`budget.tfvars.example` combines `cost_optimized` with one task and no WAF. One task means brief downtime when
+a task restarts or deploys, and no WAF means no per-IP rate limit in front of sign-in.
 
 ## Security notes
 

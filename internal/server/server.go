@@ -175,7 +175,10 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
+		// same-origin (not no-referrer): with no-referrer, browsers send
+		// "Origin: null" on plain HTML form POSTs, which breaks the CSRF check.
+		// Cross-site requests still get no referrer.
+		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		if s.cfg.SecureCookies() {
@@ -209,14 +212,27 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 // from one of our own pages (CSRF protection on top of SameSite cookies).
 func (s *Server) sameOrigin(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" || origin != s.cfg.Issuer {
+		if !s.isSameOrigin(r) {
 			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		h(w, r)
 	})
+}
+
+// isSameOrigin accepts a request whose Origin is our issuer. Browsers send
+// "Origin: null" for form POSTs in some privacy contexts; those are accepted only
+// when the browser-set Sec-Fetch-Site header (which pages can't forge) says
+// the request came from our own origin.
+func (s *Server) isSameOrigin(r *http.Request) bool {
+	switch origin := r.Header.Get("Origin"); origin {
+	case s.cfg.Issuer:
+		return true
+	case "null":
+		return r.Header.Get("Sec-Fetch-Site") == "same-origin"
+	}
+	return false
 }
 
 func clientIP(r *http.Request) string {

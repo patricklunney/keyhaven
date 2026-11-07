@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,9 +41,7 @@ func New(cfg *config.Config, st *store.Store, signer *tokens.Signer, log *slog.L
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := template.New("").Funcs(template.FuncMap{
-		"fmtTime": func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") },
-	}).ParseFS(web.Templates, "templates/*.html")
+	tmpl, err := template.New("").Funcs(templateFuncs).ParseFS(web.Templates, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +79,94 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /account/passkeys/delete", s.sameOrigin(s.handleDeletePasskey))
 	mux.Handle("POST /logout", s.sameOrigin(s.handleLogout))
 
+	// Admin console (administrators only; see admin.go)
+	mux.Handle("GET /admin", s.admin(s.handleAdminDashboard))
+	mux.Handle("GET /admin/users", s.admin(s.handleAdminUsers))
+	mux.Handle("GET /admin/users/{id}", s.admin(s.handleAdminUser))
+	mux.Handle("POST /admin/users/{id}/delete", s.adminPost(s.handleAdminDeleteUser))
+	mux.Handle("POST /admin/users/{id}/role", s.adminPost(s.handleAdminSetRole))
+	mux.Handle("POST /admin/users/{id}/revoke", s.adminPost(s.handleAdminRevokeSessions))
+	mux.Handle("POST /admin/users/{id}/passkeys/delete", s.adminPost(s.handleAdminDeletePasskey))
+	mux.Handle("GET /admin/clients", s.admin(s.handleAdminClients))
+	mux.Handle("GET /admin/clients/new", s.admin(s.handleAdminNewClient))
+	mux.Handle("POST /admin/clients", s.adminPost(s.handleAdminCreateClient))
+	mux.Handle("GET /admin/clients/{id}", s.admin(s.handleAdminClient))
+	mux.Handle("POST /admin/clients/{id}", s.adminPost(s.handleAdminUpdateClient))
+	mux.Handle("POST /admin/clients/{id}/secret", s.adminPost(s.handleAdminRotateSecret))
+	mux.Handle("POST /admin/clients/{id}/delete", s.adminPost(s.handleAdminDeleteClient))
+	mux.Handle("GET /admin/audit", s.admin(s.handleAdminAudit))
+
 	return s.securityHeaders(s.logRequests(mux))
+}
+
+var actionLabels = map[string]string{
+	"user.register":              "Signed up",
+	"user.login":                 "Signed in",
+	"user.login_blocked":         "Sign-in blocked",
+	"passkey.add":                "Added a passkey",
+	"passkey.remove":             "Removed a passkey",
+	"admin.user.delete":          "Deleted user",
+	"admin.user.promote":         "Granted admin to",
+	"admin.user.demote":          "Removed admin from",
+	"admin.user.revoke_sessions": "Signed out everywhere:",
+	"admin.passkey.remove":       "Removed a passkey of",
+	"admin.client.create":        "Created application",
+	"admin.client.update":        "Updated application",
+	"admin.client.rotate_secret": "Rotated secret of",
+	"admin.client.delete":        "Deleted application",
+}
+
+var templateFuncs = template.FuncMap{
+	"fmtTime": func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") },
+	"ago": func(t time.Time) string {
+		d := time.Since(t)
+		switch {
+		case d < time.Minute:
+			return "just now"
+		case d < time.Hour:
+			return strconv.Itoa(int(d.Minutes())) + "m ago"
+		case d < 48*time.Hour:
+			return strconv.Itoa(int(d.Hours())) + "h ago"
+		}
+		return strconv.Itoa(int(d.Hours()/24)) + "d ago"
+	},
+	"actionLabel": func(a string) string {
+		if l, ok := actionLabels[a]; ok {
+			return l
+		}
+		return a
+	},
+	"isAdminAction": func(a string) bool { return strings.HasPrefix(a, "admin.") },
+	"dict": func(kv ...any) map[string]any {
+		m := make(map[string]any, len(kv)/2)
+		for i := 0; i+1 < len(kv); i += 2 {
+			m[fmt.Sprint(kv[i])] = kv[i+1]
+		}
+		return m
+	},
+	"details": func(m map[string]any) string {
+		if len(m) == 0 {
+			return ""
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			v := m[k]
+			if list, ok := v.([]any); ok {
+				strs := make([]string, len(list))
+				for i, x := range list {
+					strs[i] = fmt.Sprint(x)
+				}
+				v = strings.Join(strs, ", ")
+			}
+			parts = append(parts, strings.ReplaceAll(k, "_", " ")+": "+fmt.Sprint(v))
+		}
+		return strings.Join(parts, " · ")
+	},
 }
 
 // ---------------------------------------------------------------- middleware
@@ -205,6 +293,22 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID str
 	}
 	s.setCookie(w, sessionCookie, tok, s.cfg.SessionTTL)
 	return nil
+}
+
+// ---------------------------------------------------------------- audit
+
+// audit records a security event. Failures are logged but never block the request.
+func (s *Server) audit(r *http.Request, actor *store.User, action, targetType, targetID, targetName string, details map[string]any) {
+	e := store.AuditEvent{
+		Action: action, TargetType: targetType, TargetID: targetID, TargetName: targetName,
+		Details: details, IP: clientIP(r),
+	}
+	if actor != nil {
+		e.ActorID, e.ActorName = actor.ID, actor.Username
+	}
+	if err := s.store.AddAudit(r.Context(), e); err != nil {
+		s.log.Error("write audit event", "action", action, "err", err)
+	}
 }
 
 // ---------------------------------------------------------------- responses

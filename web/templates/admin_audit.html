@@ -1,0 +1,14 @@
+{{template "admin_head" .}}
+<h1>Audit log</h1>
+
+<form class="search" method="get" action="/admin/audit">
+  <label for="category" class="visually-hidden">Filter events</label>
+  <select id="category" name="category">
+    {{range .Categories}}<option value="{{.Value}}" {{if eq .Value $.Category}}selected{{end}}>{{.Label}}</option>{{end}}
+  </select>
+  <button type="submit">Filter</button>
+</form>
+
+{{template "events" .Events}}
+{{template "pager" .Pager}}
+{{template "admin_foot"}}

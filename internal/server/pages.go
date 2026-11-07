@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/keyhaven/keyhaven/internal/store"
 )
@@ -13,6 +14,7 @@ type pageData struct {
 	Req         string // pending authorization request id, if any
 	AllowSignup bool
 	Next        string // where the page's script navigates after success
+	Reauth      bool   // the admin console asked the user to confirm it's them
 }
 
 func (s *Server) nextURL(req string) string {
@@ -24,9 +26,22 @@ func (s *Server) nextURL(req string) string {
 
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	req := safeReq(r.URL.Query().Get("req"))
+	next := s.nextURL(req)
+	if n := r.URL.Query().Get("next"); req == "" && safeAdminPath(n) {
+		next = n
+	}
 	s.render(w, http.StatusOK, "login.html", pageData{
-		RP: s.cfg.RPDisplayName, Req: req, AllowSignup: s.cfg.AllowSignup, Next: s.nextURL(req),
+		RP: s.cfg.RPDisplayName, Req: req, AllowSignup: s.cfg.AllowSignup, Next: next,
+		Reauth: r.URL.Query().Get("reauth") == "1",
 	})
+}
+
+// safeAdminPath allows post-login navigation only to local admin console paths.
+func safeAdminPath(p string) bool {
+	if p != "/admin" && !strings.HasPrefix(p, "/admin/") {
+		return false
+	}
+	return !strings.ContainsAny(p, "\\\r\n") && !strings.Contains(p, "//")
 }
 
 func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +93,7 @@ func (s *Server) handleAccountPage(w http.ResponseWriter, r *http.Request) {
 		views = append(views, v)
 	}
 	s.render(w, http.StatusOK, "account.html", map[string]any{
-		"RP": s.cfg.RPDisplayName, "User": u, "Passkeys": views, "CanDelete": len(views) > 1,
+		"RP": s.cfg.RPDisplayName, "User": u, "IsAdmin": u.IsAdmin, "Passkeys": views, "CanDelete": len(views) > 1,
 		"Flash": r.URL.Query().Get("msg"),
 	})
 }
@@ -103,6 +118,9 @@ func (s *Server) handleDeletePasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("passkey removed", "user_id", sess.UserID)
+	if u, err := s.store.GetUser(r.Context(), sess.UserID); err == nil {
+		s.audit(r, u, "passkey.remove", "user", u.ID, u.Username, nil)
+	}
 	http.Redirect(w, r, "/account?msg=removed", http.StatusSeeOther)
 }
 

@@ -1,0 +1,70 @@
+{{template "admin_head" .}}
+<p class="crumbs"><a href="/admin/users">Users</a> /</p>
+<h1>{{.User.DisplayName}} {{if .User.IsAdmin}}<span class="badge">admin</span>{{end}}</h1>
+<p class="muted">@{{.User.Username}}{{if .IsSelf}} · this is you{{end}}</p>
+
+<dl class="kv">
+  <dt>User ID (OIDC <code>sub</code>)</dt><dd><code>{{.User.ID}}</code></dd>
+  <dt>Joined</dt><dd>{{fmtTime .User.CreatedAt}}</dd>
+  <dt>Active sessions</dt><dd>{{.Sessions}}</dd>
+</dl>
+
+<section>
+  <h2>Passkeys</h2>
+  {{if .Passkeys}}
+  <ul class="passkeys">
+    {{range .Passkeys}}
+    <li>
+      <div>
+        <strong>{{.Name}}</strong>
+        <span class="muted">Added {{.Created}}{{if .LastUsed}} · last used {{.LastUsed}}{{else}} · never used{{end}}{{if .Synced}} · synced{{end}}</span>
+      </div>
+      <form method="post" action="/admin/users/{{$.User.ID}}/passkeys/delete">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button type="submit" class="link danger">Remove</button>
+      </form>
+    </li>
+    {{end}}
+  </ul>
+  {{if eq (len .Passkeys) 1}}<p class="muted small">Removing the only passkey locks this user out until they're deleted and sign up again.</p>{{end}}
+  {{else}}
+  <p class="notice error">This user has no passkeys and can't sign in.</p>
+  {{end}}
+</section>
+
+<section>
+  <h2>Actions</h2>
+  <div class="actions">
+    <form method="post" action="/admin/users/{{.User.ID}}/revoke">
+      <button type="submit">Sign out everywhere</button>
+      <span class="muted small">Ends all sessions and revokes refresh tokens.</span>
+    </form>
+    {{if not .IsSelf}}
+    <form method="post" action="/admin/users/{{.User.ID}}/role">
+      {{if .User.IsAdmin}}
+      <input type="hidden" name="admin" value="0"><button type="submit">Remove admin role</button>
+      {{else}}
+      <input type="hidden" name="admin" value="1"><button type="submit">Make administrator</button>
+      {{end}}
+    </form>
+    {{end}}
+  </div>
+</section>
+
+{{if not .IsSelf}}
+<section class="danger-zone">
+  <h2>Delete user</h2>
+  <p class="muted">Permanently deletes this account and all of its passkeys. Applications keep any data they stored, and access tokens already issued stay valid until they expire (15 minutes).</p>
+  <form method="post" action="/admin/users/{{.User.ID}}/delete" class="inline-form">
+    <label for="confirm-user">Type <strong>{{.User.Username}}</strong> to confirm</label>
+    <input id="confirm-user" name="confirm" autocomplete="off" required>
+    <button type="submit" class="danger-btn">Delete user</button>
+  </form>
+</section>
+{{end}}
+
+<section>
+  <h2>Activity</h2>
+  {{template "events" .Events}}
+</section>
+{{template "admin_foot"}}

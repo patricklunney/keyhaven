@@ -1,0 +1,50 @@
+{{template "admin_head" .}}
+<p class="crumbs"><a href="/admin/clients">Applications</a> /</p>
+<h1>{{.Client.Name}}</h1>
+<p class="muted">{{if .Client.Public}}Public client (single-page or native app){{else}}Confidential client (server-side web app){{end}} · created {{fmtTime .Client.CreatedAt}}</p>
+
+<section>
+  <h2>Integration details</h2>
+  {{template "integration" .}}
+</section>
+
+<section>
+  <h2>Settings</h2>
+  <form method="post" action="/admin/clients/{{.Client.ID}}" class="form">
+    {{with .Form.Error}}<p class="notice error" role="alert">{{.}}</p>{{end}}
+    <label for="name">Application name</label>
+    <input id="name" name="name" value="{{.Form.Name}}" required maxlength="100">
+    <label for="redirect_uris">Redirect URIs</label>
+    <textarea id="redirect_uris" name="redirect_uris" rows="3" required>{{.Form.RedirectURIs}}</textarea>
+    <p class="hint">One per line. https only, except <code>localhost</code>.</p>
+    <label for="post_logout_uris">Post-logout redirect URIs</label>
+    <textarea id="post_logout_uris" name="post_logout_uris" rows="2">{{.Form.PostLogoutURIs}}</textarea>
+    <div class="form-actions"><button type="submit" class="primary">Save changes</button></div>
+  </form>
+</section>
+
+{{if not .Client.Public}}
+<section>
+  <h2>Client secret</h2>
+  <p class="muted">Rotating issues a new secret and immediately invalidates the current one. Update the application right away.</p>
+  <form method="post" action="/admin/clients/{{.Client.ID}}/secret">
+    <button type="submit">Rotate secret</button>
+  </form>
+</section>
+{{end}}
+
+<section class="danger-zone">
+  <h2>Delete application</h2>
+  <p class="muted">The application immediately loses the ability to sign users in or refresh tokens. User accounts are not affected.</p>
+  <form method="post" action="/admin/clients/{{.Client.ID}}/delete" class="inline-form">
+    <label for="confirm-client">Type <strong>{{.Client.Name}}</strong> to confirm</label>
+    <input id="confirm-client" name="confirm" autocomplete="off" required>
+    <button type="submit" class="danger-btn">Delete application</button>
+  </form>
+</section>
+
+<section>
+  <h2>History</h2>
+  {{template "events" .Events}}
+</section>
+{{template "admin_foot"}}

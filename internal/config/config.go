@@ -30,6 +30,10 @@ type Config struct {
 	IDTokenTTL      time.Duration
 	RefreshTokenTTL time.Duration
 
+	// AdminReauth is the maximum session age allowed for the admin console;
+	// older sessions must sign in again with a passkey.
+	AdminReauth time.Duration
+
 	// Dev relaxes a few production requirements (http issuer, ephemeral signing key).
 	Dev bool
 }
@@ -49,6 +53,7 @@ func Load() (*Config, error) {
 		AccessTokenTTL:  envDuration("KEYHAVEN_ACCESS_TOKEN_TTL", 15*time.Minute),
 		IDTokenTTL:      envDuration("KEYHAVEN_ID_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: envDuration("KEYHAVEN_REFRESH_TOKEN_TTL", 30*24*time.Hour),
+		AdminReauth:     envDuration("KEYHAVEN_ADMIN_REAUTH", time.Hour),
 	}
 
 	if c.Issuer == "" {

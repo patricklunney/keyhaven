@@ -36,6 +36,8 @@ Usage:
   keyhaven client list                 List OIDC clients
   keyhaven client delete ID            Delete an OIDC client
   keyhaven user list                   List users
+  keyhaven user promote USERNAME       Grant the administrator role (access to /admin)
+  keyhaven user demote USERNAME        Remove the administrator role
   keyhaven user delete ID              Delete a user and all their passkeys
 
 Configuration is read from environment variables; see README.md.
@@ -215,7 +217,7 @@ func clientCmd(args []string) error {
 			return errors.New("--name and at least one --redirect-uri are required")
 		}
 		for _, u := range append(append([]string{}, redirects...), postLogout...) {
-			if err := validateRedirectURI(u); err != nil {
+			if err := server.ValidateRedirectURI(u); err != nil {
 				return err
 			}
 		}
@@ -265,16 +267,45 @@ func userCmd(args []string) error {
 	switch args[0] {
 	case "list":
 		return withStore(func(ctx context.Context, st *store.Store) error {
-			us, err := st.ListUsers(ctx)
+			us, _, err := st.SearchUsers(ctx, "", 100000, 0)
 			if err != nil {
 				return err
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tUSERNAME\tDISPLAY NAME\tPASSKEYS\tCREATED")
+			fmt.Fprintln(tw, "ID\tUSERNAME\tDISPLAY NAME\tADMIN\tPASSKEYS\tCREATED")
 			for _, u := range us {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", u.ID, u.Username, u.DisplayName, u.Passkeys, u.CreatedAt.Format(time.RFC3339))
+				admin := ""
+				if u.IsAdmin {
+					admin = "yes"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n", u.ID, u.Username, u.DisplayName, admin, u.Passkeys, u.CreatedAt.Format(time.RFC3339))
 			}
 			return tw.Flush()
+		})
+	case "promote", "demote":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: keyhaven user %s USERNAME", args[0])
+		}
+		grant := args[0] == "promote"
+		return withStore(func(ctx context.Context, st *store.Store) error {
+			u, err := st.GetUserByUsername(ctx, args[1])
+			if err != nil {
+				return fmt.Errorf("user %q: %w", args[1], err)
+			}
+			if err := st.SetAdmin(ctx, u.ID, grant); err != nil {
+				return err
+			}
+			action := "admin.user.promote"
+			if !grant {
+				action = "admin.user.demote"
+			}
+			_ = st.AddAudit(ctx, store.AuditEvent{ActorName: "cli", Action: action, TargetType: "user", TargetID: u.ID, TargetName: u.Username})
+			if grant {
+				fmt.Printf("%s is now an administrator. Sign in at <issuer>/admin\n", u.Username)
+			} else {
+				fmt.Printf("%s is no longer an administrator.\n", u.Username)
+			}
+			return nil
 		})
 	case "delete":
 		if len(args) != 2 {
@@ -283,21 +314,4 @@ func userCmd(args []string) error {
 		return withStore(func(ctx context.Context, st *store.Store) error { return st.DeleteUser(ctx, args[1]) })
 	}
 	return fmt.Errorf("unknown user subcommand %q", args[0])
-}
-
-// validateRedirectURI requires https, except for loopback addresses and
-// private-use URI schemes used by native apps (RFC 8252).
-func validateRedirectURI(raw string) error {
-	if strings.Contains(raw, "#") {
-		return fmt.Errorf("redirect URI %q must not contain a fragment", raw)
-	}
-	switch {
-	case strings.HasPrefix(raw, "https://"):
-		return nil
-	case strings.HasPrefix(raw, "http://localhost"), strings.HasPrefix(raw, "http://127.0.0.1"), strings.HasPrefix(raw, "http://[::1]"):
-		return nil
-	case strings.Contains(raw, ":/") && !strings.HasPrefix(raw, "http:"):
-		return nil // e.g. com.example.app:/callback
-	}
-	return fmt.Errorf("redirect URI %q must use https (http is allowed only for localhost)", raw)
 }

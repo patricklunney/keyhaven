@@ -1,7 +1,12 @@
 {{template "head" (printf "Sign in · %s" .RP)}}
 <p class="brand">{{.RP}}</p>
+{{if .Reauth}}
+<h1>Confirm it's you</h1>
+<p class="muted">The admin console requires a recent sign-in. Use your passkey to continue.</p>
+{{else}}
 <h1>Sign in</h1>
 <p class="muted">Use the passkey saved on your device or security key. No password needed.</p>
+{{end}}
 
 <div id="login" data-next="{{.Next}}">
   <button type="button" id="login-btn" class="primary">Sign in with a passkey</button>

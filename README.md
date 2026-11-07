@@ -26,6 +26,13 @@ AWS ALB/Cognito federation, Grafana, etc.).
 - Discovery, `userinfo`, RP-initiated logout (`end_session`), `prompt=none|login`
 - RFC 9207 `iss` parameter on authorization responses
 
+**Admin console** (`/admin`)
+- Onboard applications through a guided form. The client secret is shown once, alongside copy-paste integration settings
+- Edit redirect URIs, rotate secrets, delete applications
+- Browse and search all users, inspect their passkeys, sign them out everywhere, grant or remove admin, delete accounts
+- Dashboard with counts and recent activity, plus a filterable audit log of sign-ups, sign-ins and every admin action
+- Only administrators can get in, and they must have signed in with a passkey within the last hour. Every change is CSRF-protected, and the system refuses to remove its last administrator
+
 **Operations**
 - Stateless app tasks; all state lives in Postgres, so it scales out horizontally
 - Migrations run automatically at startup (guarded by an advisory lock)
@@ -55,7 +62,7 @@ flowchart LR
 | Path | Purpose |
 |---|---|
 | `cmd/keyhaven` | CLI: `serve`, `migrate`, `genkey`, `client …`, `user …` |
-| `internal/server` | HTTP handlers: WebAuthn, OIDC and pages |
+| `internal/server` | HTTP handlers: WebAuthn, OIDC, user pages and the admin console |
 | `internal/store` | Postgres persistence and embedded SQL migrations |
 | `internal/tokens` | ES256 JWT signing and verification, JWKS |
 | `web/` | Embedded HTML templates, CSS and the WebAuthn browser client |
@@ -70,36 +77,38 @@ docker compose up --build
 open http://localhost:8080        # create an account with a passkey
 ```
 
-Without Docker (Go 1.27+ and a local Postgres):
+Without Docker (Go 1.27+ and PostgreSQL installed, e.g. `brew install postgresql@17`):
 
 ```sh
-export KEYHAVEN_ISSUER=http://localhost:8080 KEYHAVEN_DEV=true
-export KEYHAVEN_DATABASE_URL="postgres://localhost:5432/keyhaven?sslmode=disable"
-go run ./cmd/keyhaven serve
+make db      # starts a local Postgres in .devdb/ (port 55433)
+make run     # http://localhost:8080
 ```
 
 > Browsers allow WebAuthn on `http://localhost`. Anywhere else requires HTTPS, and the
 > RP ID must be a domain name, not an IP address.
 
-Register a test client and try the flow:
+Then make your account an administrator and open the admin console:
 
 ```sh
-go run ./cmd/keyhaven client create --name "Local app" --redirect-uri http://localhost:3000/callback
+make admin NAME=<your-username>
+open http://localhost:8080/admin
 ```
 
 ### Tests
 
 ```sh
-go test ./...                                    # unit tests
-KEYHAVEN_TEST_DATABASE_URL="postgres://localhost:5432/keyhaven_test?sslmode=disable" go test ./...
+go test ./...    # unit tests
+make e2e         # end-to-end tests against the keyhaven_test database from `make db`
 ```
 
-The end-to-end test (`internal/server/e2e_test.go`) uses a software FIDO2 authenticator
+The end-to-end tests (`internal/server/e2e_test.go`) use a software FIDO2 authenticator
 to drive the real handlers through these steps: sign-up, sign-in, authorize → code → token →
 userinfo, and refresh rotation. It also checks the attack cases: wrong PKCE verifier, reused
 code, wrong client secret, cloned authenticator, cross-origin POST, unregistered redirect
-URI, and an ID token presented as an access token. **It drops and recreates the `public`
-schema, so point it only at a throwaway database.**
+URI, and an ID token presented as an access token. A second test covers the admin console:
+access control, onboarding, secret rotation, user management, re-authentication, unsafe redirects
+and the audit log. **The tests drop and recreate the `public` schema, so point them only at a
+throwaway database.**
 
 ## Configuration
 
@@ -118,14 +127,40 @@ All configuration comes from environment variables.
 | `KEYHAVEN_ACCESS_TOKEN_TTL` | `15m` | |
 | `KEYHAVEN_ID_TOKEN_TTL` | `15m` | |
 | `KEYHAVEN_REFRESH_TOKEN_TTL` | `720h` | |
+| `KEYHAVEN_ADMIN_REAUTH` | `1h` | Maximum session age for the admin console; older sessions must sign in with a passkey again |
 | `KEYHAVEN_LISTEN_ADDR` | `:8080` | |
 | `KEYHAVEN_DEV` | `false` | Allows an `http://` issuer and an ephemeral signing key. Never use in production. |
+
+## Admin console
+
+Administrators manage Keyhaven at `https://<your-domain>/admin`.
+
+**Bootstrapping the first administrator.** Sign up normally with a passkey, then grant the role from the
+CLI. On Fargate, run it as a one-off task (see [Admin tasks on Fargate](#admin-tasks-on-fargate)):
+
+```sh
+keyhaven user promote <username>
+```
+
+After that, admins can promote others from the console. To lock sign-up down to people you've
+invited, set `allow_signup = false` once your admins exist.
+
+| Page | What you can do |
+|---|---|
+| Dashboard | Counts of users, applications, passkeys and active sessions; newest users; recent activity |
+| Applications | Onboard an app (web app with a secret, or a public SPA/native app using PKCE); view integration settings; edit redirect URIs; rotate the secret; delete |
+| Users | Search and page through all users; view a user's passkeys and activity; sign them out everywhere; remove a passkey; grant or remove admin; delete the account |
+| Audit log | Every sign-up, sign-in, blocked sign-in, passkey change and admin action, with actor, target, details and IP |
+
+Safeguards: admins can't delete or demote themselves, the last administrator can't be removed, and
+destructive actions require typing the user's or application's name to confirm.
 
 ## Connect an application
 
 Discovery document: `https://id.example.com/.well-known/openid-configuration`
 
-1. Register the client (locally, or with the one-off ECS task shown below):
+1. Register the client in the admin console under **Applications → Add an application** (or with the CLI,
+   locally or as a one-off ECS task):
    ```sh
    keyhaven client create --name "My App" \
      --redirect-uri https://app.example.com/callback \
@@ -191,8 +226,9 @@ terraform output -raw register_client_command   # prints a ready-to-edit aws ecs
 ```
 
 The client secret is printed to the task's CloudWatch logs (`/ecs/keyhaven`). Copy it
-out, then delete that log stream. Other commands work the same way: `client list`,
-`client delete ID`, `user list`, `user delete ID`.
+out, then delete that log stream. Other commands work the same way: `user promote USERNAME`,
+`client list`, `client delete ID`, `user list`, `user delete ID`. Once an administrator exists, the
+admin console covers all of these.
 
 ### Signing key
 
@@ -232,7 +268,6 @@ extra cost.
 
 Not implemented yet. Contributions welcome:
 
-- Admin web UI (today: CLI)
 - Email capture and verification, SCIM provisioning
 - Signing-key rotation with multiple published keys
 - Back-channel logout, token revocation (RFC 7009) and introspection (RFC 7662) endpoints

@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -154,7 +155,7 @@ func newHarness(t *testing.T) *harness {
 	cfg := &config.Config{
 		Issuer: base, RPID: "localhost", RPDisplayName: "Test", RPOrigins: []string{base},
 		DatabaseURL: dsn, AllowSignup: true, Dev: true,
-		SessionTTL: time.Hour, AccessTokenTTL: time.Minute, IDTokenTTL: time.Minute, RefreshTokenTTL: time.Hour,
+		SessionTTL: time.Hour, AccessTokenTTL: time.Minute, IDTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, AdminReauth: time.Hour,
 	}
 	st, err := store.Open(ctx, dsn)
 	if err != nil {
@@ -448,4 +449,247 @@ func out2(t *testing.T, h *harness, clientID, secret, refresh string, next *stri
 	code, again := h.token(form, clientID, secret)
 	mustStatus(t, code, 400, again)
 	return out["id_token"].(string)
+}
+
+// ---------------------------------------------------------------- admin console
+
+func (h *harness) register(c *http.Client, username string) *authenticator {
+	h.t.Helper()
+	a := newAuthenticator("localhost", h.origin)
+	code, opts := h.postJSON(c, "/webauthn/register/begin", map[string]string{"username": username})
+	mustStatus(h.t, code, 200, opts)
+	code, out := h.postJSON(c, "/webauthn/register/finish", a.create(h.t, opts))
+	mustStatus(h.t, code, 200, out)
+	return a
+}
+
+// page performs a GET and returns status, body and redirect location.
+func (h *harness) page(c *http.Client, path string) (int, string, string) {
+	h.t.Helper()
+	res, err := c.Get(h.base + path)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b), res.Header.Get("Location")
+}
+
+// form POSTs like a browser form on our own origin (origin "" omits the header).
+func (h *harness) form(c *http.Client, path string, v url.Values, origin string) (int, string, string) {
+	h.t.Helper()
+	req, _ := http.NewRequest("POST", h.base+path, strings.NewReader(v.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	res, err := c.Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b), res.Header.Get("Location")
+}
+
+var secretRE = regexp.MustCompile(`id="client-secret">([^<]+)</code>`)
+
+func TestAdminConsole(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	rootB, bobB := h.browser(), h.browser()
+	h.register(rootB, "root")
+	h.register(bobB, "bob")
+	root, _ := h.st.GetUserByUsername(ctx, "root")
+	bob, _ := h.st.GetUserByUsername(ctx, "bob")
+
+	// Anonymous → login with next; signed-in non-admin → 403
+	_, _, loc := h.page(h.browser(), "/admin/users")
+	if loc != "/login?next=%2Fadmin%2Fusers" {
+		t.Fatalf("anonymous admin access should redirect to login, got %q", loc)
+	}
+	if code, _, _ := h.page(rootB, "/admin"); code != 403 {
+		t.Fatalf("non-admin got %d on /admin", code)
+	}
+
+	// The first admin is bootstrapped out-of-band (CLI: keyhaven user promote)
+	if err := h.st.SetAdmin(ctx, root.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.st.SetAdmin(ctx, root.ID, false); err != store.ErrLastAdmin {
+		t.Fatalf("demoting the last admin should fail, got %v", err)
+	}
+
+	code, body, _ := h.page(rootB, "/admin")
+	mustStatus(t, code, 200, body)
+	if !strings.Contains(body, "Dashboard") || !strings.Contains(body, "Connect your first application") {
+		t.Fatal("dashboard did not render expected content")
+	}
+	if code, _, _ := h.page(bobB, "/admin/clients"); code != 403 {
+		t.Fatalf("bob (non-admin) got %d", code)
+	}
+
+	// Users list and search
+	_, body, _ = h.page(rootB, "/admin/users?q=bo")
+	if !strings.Contains(body, "@bob") || strings.Contains(body, "@root") {
+		t.Fatalf("search for 'bo' should list only bob")
+	}
+	code, body, _ = h.page(rootB, "/admin/users/"+bob.ID)
+	mustStatus(t, code, 200, body)
+
+	// --- Onboard an application
+	good := url.Values{"name": {"Portal"}, "type": {"confidential"},
+		"redirect_uris": {"https://portal.example/cb\nhttp://localhost:3000/cb"}, "post_logout_uris": {"https://portal.example/"}}
+	if code, _, _ := h.form(rootB, "/admin/clients", good, ""); code != 403 {
+		t.Fatalf("admin POST without Origin should be refused, got %d", code)
+	}
+	if code, _, _ := h.form(rootB, "/admin/clients", good, "https://evil.example"); code != 403 {
+		t.Fatalf("admin POST from foreign origin should be refused, got %d", code)
+	}
+	bad := url.Values{"name": {"Evil"}, "redirect_uris": {"http://evil.example/cb"}}
+	code, body, _ = h.form(rootB, "/admin/clients", bad, h.origin)
+	if code != 400 || !strings.Contains(body, "must use https") {
+		t.Fatalf("invalid redirect should re-render form with error, got %d", code)
+	}
+	code, body, _ = h.form(rootB, "/admin/clients", good, h.origin)
+	mustStatus(t, code, 200, body)
+	m := secretRE.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("secret not shown after creating client")
+	}
+	clients, _ := h.st.ListClients(ctx)
+	if len(clients) != 1 || clients[0].Name != "Portal" || len(clients[0].RedirectURIs) != 2 {
+		t.Fatalf("client not stored correctly: %+v", clients)
+	}
+	cl := clients[0]
+	if string(store.HashSecret(m[1])) != string(cl.SecretHash) {
+		t.Fatal("displayed secret does not match stored hash")
+	}
+
+	// Public client gets no secret
+	code, body, _ = h.form(rootB, "/admin/clients", url.Values{"name": {"SPA"}, "type": {"public"}, "redirect_uris": {"https://spa.example/cb"}}, h.origin)
+	mustStatus(t, code, 200, body)
+	if secretRE.MatchString(body) {
+		t.Fatal("public client must not be shown a secret")
+	}
+
+	// Edit, rotate secret
+	code, _, loc = h.form(rootB, "/admin/clients/"+cl.ID, url.Values{"name": {"Portal 2"}, "redirect_uris": {"https://portal.example/new"}}, h.origin)
+	if code != 303 || !strings.Contains(loc, "msg=client_saved") {
+		t.Fatalf("update: %d %s", code, loc)
+	}
+	updated, _ := h.st.GetClient(ctx, cl.ID)
+	if updated.Name != "Portal 2" || len(updated.RedirectURIs) != 1 || updated.RedirectURIs[0] != "https://portal.example/new" {
+		t.Fatalf("update not applied: %+v", updated)
+	}
+	_, body, _ = h.form(rootB, "/admin/clients/"+cl.ID+"/secret", nil, h.origin)
+	m2 := secretRE.FindStringSubmatch(body)
+	if m2 == nil || m2[1] == m[1] {
+		t.Fatal("rotate did not show a new secret")
+	}
+	rotated, _ := h.st.GetClient(ctx, cl.ID)
+	if string(store.HashSecret(m2[1])) != string(rotated.SecretHash) {
+		t.Fatal("rotated secret not stored")
+	}
+	code, body, _ = h.page(rootB, "/admin/clients/"+cl.ID)
+	mustStatus(t, code, 200, body)
+
+	// Delete requires typing the name
+	_, _, loc = h.form(rootB, "/admin/clients/"+cl.ID+"/delete", url.Values{"confirm": {"nope"}}, h.origin)
+	if !strings.Contains(loc, "msg=confirm") {
+		t.Fatalf("wrong confirmation should not delete: %s", loc)
+	}
+	if _, err := h.st.GetClient(ctx, cl.ID); err != nil {
+		t.Fatal("client deleted despite wrong confirmation")
+	}
+	h.form(rootB, "/admin/clients/"+cl.ID+"/delete", url.Values{"confirm": {"Portal 2"}}, h.origin)
+	if _, err := h.st.GetClient(ctx, cl.ID); err != store.ErrNotFound {
+		t.Fatal("client not deleted")
+	}
+
+	// --- Manage users
+	h.form(rootB, "/admin/users/"+bob.ID+"/role", url.Values{"admin": {"1"}}, h.origin)
+	if u, _ := h.st.GetUser(ctx, bob.ID); !u.IsAdmin {
+		t.Fatal("promote failed")
+	}
+	if code, _, _ := h.page(bobB, "/admin"); code != 200 {
+		t.Fatalf("promoted bob should reach /admin, got %d", code)
+	}
+	h.form(rootB, "/admin/users/"+bob.ID+"/role", url.Values{"admin": {"0"}}, h.origin)
+	if code, _, _ := h.page(bobB, "/admin"); code != 403 {
+		t.Fatalf("demotion must take effect immediately, got %d", code)
+	}
+	_, _, loc = h.form(rootB, "/admin/users/"+root.ID+"/role", url.Values{"admin": {"0"}}, h.origin)
+	if !strings.Contains(loc, "msg=self_demote") {
+		t.Fatalf("self-demotion should be refused: %s", loc)
+	}
+	_, _, loc = h.form(rootB, "/admin/users/"+root.ID+"/delete", url.Values{"confirm": {"root"}}, h.origin)
+	if !strings.Contains(loc, "msg=self_delete") {
+		t.Fatalf("self-deletion should be refused: %s", loc)
+	}
+
+	// Sign bob out everywhere
+	h.form(rootB, "/admin/users/"+bob.ID+"/revoke", nil, h.origin)
+	if _, _, loc := h.page(bobB, "/account"); loc != "/login" {
+		t.Fatalf("bob should be signed out, got %q", loc)
+	}
+
+	// Delete bob (needs typed username)
+	h.form(rootB, "/admin/users/"+bob.ID+"/delete", url.Values{"confirm": {"BOB"}}, h.origin)
+	if _, err := h.st.GetUser(ctx, bob.ID); err != nil {
+		t.Fatal("bob deleted despite wrong confirmation")
+	}
+	_, _, loc = h.form(rootB, "/admin/users/"+bob.ID+"/delete", url.Values{"confirm": {"bob"}}, h.origin)
+	if !strings.Contains(loc, "msg=user_deleted") {
+		t.Fatalf("delete user: %s", loc)
+	}
+	if _, err := h.st.GetUser(ctx, bob.ID); err != store.ErrNotFound {
+		t.Fatal("bob not deleted")
+	}
+
+	// --- Audit log
+	code, body, _ = h.page(rootB, "/admin/audit?category=admin.")
+	mustStatus(t, code, 200, body)
+	for _, want := range []string{"Created application", "Rotated secret of", "Deleted application", "Deleted user", "Signed out everywhere"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("audit log missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Signed up") {
+		t.Error("admin filter should exclude sign-up events")
+	}
+	_, body, _ = h.page(rootB, "/admin/audit")
+	if !strings.Contains(body, "Signed up") {
+		t.Error("audit log should include sign-ups")
+	}
+
+	// --- Login redirect safety
+	_, body, _ = h.page(h.browser(), "/login?next=/admin/users")
+	if !strings.Contains(body, `data-next="/admin/users"`) {
+		t.Error("login should honour next=/admin/...")
+	}
+	for _, evil := range []string{"//evil.example", "/admin//evil.example", "https://evil.example/admin", "/administrator"} {
+		_, body, _ = h.page(h.browser(), "/login?next="+url.QueryEscape(evil))
+		if !strings.Contains(body, `data-next="/account"`) {
+			t.Errorf("login must ignore unsafe next=%q", evil)
+		}
+	}
+
+	// --- Stale sessions must re-authenticate
+	conn, err := pgx.Connect(ctx, os.Getenv("KEYHAVEN_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, `UPDATE sessions SET created_at = now() - interval '2 hours' WHERE user_id=$1`, root.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _, loc = h.page(rootB, "/admin/users")
+	if loc != "/login?reauth=1&next=%2Fadmin%2Fusers" {
+		t.Fatalf("stale admin session should re-authenticate, got %q", loc)
+	}
+	if code, _, _ := h.page(rootB, "/account"); code != 200 {
+		t.Fatal("stale session should still work outside the admin console")
+	}
 }

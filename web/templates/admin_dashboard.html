@@ -1,0 +1,45 @@
+{{template "admin_head" .}}
+<h1>Dashboard</h1>
+
+<section class="stats" aria-label="Summary">
+  <a class="stat" href="/admin/users"><span class="num">{{.Stats.Users}}</span><span class="label">Users</span><span class="sub">+{{.Stats.SignupsLast7d}} in 7 days</span></a>
+  <a class="stat" href="/admin/clients"><span class="num">{{.Stats.Clients}}</span><span class="label">Applications</span></a>
+  <div class="stat"><span class="num">{{.Stats.Passkeys}}</span><span class="label">Passkeys</span></div>
+  <div class="stat"><span class="num">{{.Stats.ActiveSessions}}</span><span class="label">Active sessions</span><span class="sub">{{.Stats.SignInsLast24h}} sign-ins in 24h</span></div>
+  <div class="stat"><span class="num">{{.Stats.Admins}}</span><span class="label">Administrators</span></div>
+</section>
+
+{{if eq .Stats.Clients 0}}
+<div class="callout">
+  <h2>Connect your first application</h2>
+  <p class="muted">Register an app to let it sign users in with passkeys over OpenID Connect.</p>
+  <a class="button primary" href="/admin/clients/new">Add an application</a>
+</div>
+{{end}}
+
+<div class="grid2">
+  <section>
+    <div class="section-head"><h2>Newest users</h2><a href="/admin/users">View all</a></div>
+    {{if .RecentUsers}}
+    <ul class="rows">
+      {{range .RecentUsers}}
+      <li><a href="/admin/users/{{.ID}}"><strong>{{.DisplayName}}</strong> <span class="muted">@{{.Username}}</span></a><span class="muted small">{{ago .CreatedAt}}</span></li>
+      {{end}}
+    </ul>
+    {{else}}<p class="muted">No users yet.</p>{{end}}
+  </section>
+  <section>
+    <div class="section-head"><h2>Recent activity</h2><a href="/admin/audit">Audit log</a></div>
+    {{if .Events}}
+    <ul class="rows">
+      {{range .Events}}
+      <li>
+        <span>{{if isAdminAction .Action}}<span class="badge">admin</span> {{end}}<strong>{{or .ActorName "system"}}</strong> {{actionLabel .Action}}{{if isAdminAction .Action}} {{.TargetName}}{{end}}</span>
+        <span class="muted small" title="{{fmtTime .At}}">{{ago .At}}</span>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}<p class="muted">No activity yet.</p>{{end}}
+  </section>
+</div>
+{{template "admin_foot"}}

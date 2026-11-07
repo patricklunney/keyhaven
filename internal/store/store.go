@@ -127,6 +127,7 @@ type User struct {
 	Username    string
 	DisplayName string
 	Email       string
+	IsAdmin     bool
 	CreatedAt   time.Time
 	Credentials []webauthn.Credential
 }
@@ -167,10 +168,14 @@ func (s *Store) CreateUserWithCredential(ctx context.Context, u *User, cred *web
 	})
 }
 
-const userCols = `id, handle, username, display_name, COALESCE(email,''), created_at`
+const userCols = `id, handle, username, display_name, COALESCE(email,''), is_admin, created_at`
 
 func (s *Store) GetUser(ctx context.Context, id string) (*User, error) {
 	return s.getUser(ctx, `SELECT `+userCols+` FROM users WHERE id=$1`, id)
+}
+
+func (s *Store) GetUserByUsername(ctx context.Context, username string) (*User, error) {
+	return s.getUser(ctx, `SELECT `+userCols+` FROM users WHERE lower(username)=lower($1)`, username)
 }
 
 func (s *Store) GetUserByHandle(ctx context.Context, handle []byte) (*User, error) {
@@ -179,7 +184,7 @@ func (s *Store) GetUserByHandle(ctx context.Context, handle []byte) (*User, erro
 
 func (s *Store) getUser(ctx context.Context, q string, arg any) (*User, error) {
 	u := &User{}
-	err := s.pool.QueryRow(ctx, q, arg).Scan(&u.ID, &u.Handle, &u.Username, &u.DisplayName, &u.Email, &u.CreatedAt)
+	err := s.pool.QueryRow(ctx, q, arg).Scan(&u.ID, &u.Handle, &u.Username, &u.DisplayName, &u.Email, &u.IsAdmin, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -198,21 +203,37 @@ func (s *Store) getUser(ctx context.Context, q string, arg any) (*User, error) {
 
 type UserSummary struct {
 	ID, Username, DisplayName string
+	IsAdmin                   bool
 	CreatedAt                 time.Time
+	LastSeen                  *time.Time // most recent passkey use
 	Passkeys                  int
 }
 
-func (s *Store) ListUsers(ctx context.Context) ([]UserSummary, error) {
-	rows, err := s.pool.Query(ctx, `SELECT u.id, u.username, u.display_name, u.created_at, count(c.id)
-		FROM users u LEFT JOIN credentials c ON c.user_id=u.id GROUP BY u.id ORDER BY u.created_at`)
-	if err != nil {
-		return nil, err
+// SearchUsers lists users matching q (username or display name, case-insensitive),
+// newest first, and returns the total number of matches.
+func (s *Store) SearchUsers(ctx context.Context, q string, limit, offset int) ([]UserSummary, int, error) {
+	pattern := "%" + escapeLike(q) + "%"
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE username ILIKE $1 OR display_name ILIKE $1`, pattern).Scan(&total); err != nil {
+		return nil, 0, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (UserSummary, error) {
+	rows, err := s.pool.Query(ctx, `SELECT u.id, u.username, u.display_name, u.is_admin, u.created_at, max(c.last_used_at), count(c.id)
+		FROM users u LEFT JOIN credentials c ON c.user_id=u.id
+		WHERE u.username ILIKE $1 OR u.display_name ILIKE $1
+		GROUP BY u.id ORDER BY u.created_at DESC LIMIT $2 OFFSET $3`, pattern, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	users, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (UserSummary, error) {
 		var u UserSummary
-		err := r.Scan(&u.ID, &u.Username, &u.DisplayName, &u.CreatedAt, &u.Passkeys)
+		err := r.Scan(&u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.CreatedAt, &u.LastSeen, &u.Passkeys)
 		return u, err
 	})
+	return users, total, err
+}
+
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id string) error {

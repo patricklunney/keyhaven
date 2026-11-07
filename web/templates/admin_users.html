@@ -1,0 +1,32 @@
+{{template "admin_head" .}}
+<h1>Users</h1>
+
+<form class="search" method="get" action="/admin/users" role="search">
+  <label for="q" class="visually-hidden">Search users</label>
+  <input id="q" name="q" value="{{.Q}}" placeholder="Search by username or name" autocomplete="off">
+  <button type="submit">Search</button>
+  {{if .Q}}<a href="/admin/users">Clear</a>{{end}}
+</form>
+
+{{if .Users}}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>User</th><th>Role</th><th class="num">Passkeys</th><th>Last sign-in</th><th>Joined</th></tr></thead>
+  <tbody>
+  {{range .Users}}
+  <tr>
+    <td><a href="/admin/users/{{.ID}}"><strong>{{.DisplayName}}</strong></a><br><span class="muted small">@{{.Username}}</span></td>
+    <td>{{if .IsAdmin}}<span class="badge">admin</span>{{else}}<span class="muted">user</span>{{end}}</td>
+    <td class="num">{{.Passkeys}}</td>
+    <td>{{with .LastSeen}}<span title="{{fmtTime .}}">{{ago .}}</span>{{else}}<span class="muted">never</span>{{end}}</td>
+    <td><span title="{{fmtTime .CreatedAt}}">{{ago .CreatedAt}}</span></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{template "pager" .Pager}}
+{{else}}
+<p class="muted">{{if .Q}}No users match “{{.Q}}”.{{else}}No users yet.{{end}}</p>
+{{end}}
+{{template "admin_foot"}}

@@ -1,7 +1,7 @@
 {{template "head" (printf "Your account · %s" .RP)}}
 <p class="brand">{{.RP}}</p>
 <h1>{{.User.DisplayName}}</h1>
-<p class="muted">Signed in as <strong>{{.User.Username}}</strong></p>
+<p class="muted">Signed in as <strong>{{.User.Username}}</strong>{{if .IsAdmin}} · <a href="/admin">Admin console</a>{{end}}</p>
 
 {{if eq .Flash "removed"}}<p class="notice">Passkey removed.</p>{{end}}
 {{if eq .Flash "last"}}<p class="notice error">You can't remove your only passkey. Add another passkey first.</p>{{end}}

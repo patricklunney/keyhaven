@@ -7,3 +7,4 @@
 *.tfvars
 !example.tfvars
 .terraform.lock.hcl
+.devdb/

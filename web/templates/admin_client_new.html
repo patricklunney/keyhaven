@@ -1,0 +1,39 @@
+{{template "admin_head" .}}
+<p class="crumbs"><a href="/admin/clients">Applications</a> /</p>
+<h1>Add an application</h1>
+
+<form method="post" action="/admin/clients" class="form">
+  {{with .Form.Error}}<p class="notice error" role="alert">{{.}}</p>{{end}}
+
+  <label for="name">Application name</label>
+  <input id="name" name="name" value="{{.Form.Name}}" required maxlength="100" placeholder="e.g. Customer Portal">
+  <p class="hint">Shown in the admin console and audit log.</p>
+
+  <fieldset>
+    <legend>Application type</legend>
+    <label class="choice">
+      <input type="radio" name="type" value="confidential" {{if ne .Form.Type "public"}}checked{{end}}>
+      <span><strong>Web application (server-side)</strong><br>
+      <span class="hint">Has a backend that can keep a client secret. Examples: Next.js, Rails, Django, Spring, Go.</span></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="type" value="public" {{if eq .Form.Type "public"}}checked{{end}}>
+      <span><strong>Single-page or native app</strong><br>
+      <span class="hint">Runs entirely in a browser or on a device and can't keep a secret. No secret is issued; PKCE secures it.</span></span>
+    </label>
+  </fieldset>
+
+  <label for="redirect_uris">Redirect URIs</label>
+  <textarea id="redirect_uris" name="redirect_uris" rows="3" required placeholder="https://app.example.com/auth/callback">{{.Form.RedirectURIs}}</textarea>
+  <p class="hint">One per line. Must exactly match what the app sends. Use https; http is only allowed for <code>localhost</code>.</p>
+
+  <label for="post_logout_uris">Post-logout redirect URIs <span class="muted">(optional)</span></label>
+  <textarea id="post_logout_uris" name="post_logout_uris" rows="2" placeholder="https://app.example.com/">{{.Form.PostLogoutURIs}}</textarea>
+  <p class="hint">Where users may be sent after signing out via <code>/end_session</code>.</p>
+
+  <div class="form-actions">
+    <button type="submit" class="primary">Create application</button>
+    <a href="/admin/clients">Cancel</a>
+  </div>
+</form>
+{{template "admin_foot"}}

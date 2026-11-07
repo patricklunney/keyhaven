@@ -1,0 +1,32 @@
+{{template "admin_head" .}}
+<div class="section-head">
+  <h1>Applications</h1>
+  <a class="button primary" href="/admin/clients/new">Add an application</a>
+</div>
+<p class="muted">Applications (OpenID Connect clients) that can sign users in through {{.RP}}.</p>
+
+{{if .Clients}}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Name</th><th>Type</th><th>Client ID</th><th>Redirect URIs</th><th>Created</th></tr></thead>
+  <tbody>
+  {{range .Clients}}
+  <tr>
+    <td><a href="/admin/clients/{{.ID}}"><strong>{{.Name}}</strong></a></td>
+    <td>{{if .Public}}Public{{else}}Confidential{{end}}</td>
+    <td><code class="small">{{.ID}}</code></td>
+    <td class="small">{{range $i, $u := .RedirectURIs}}{{if $i}}<br>{{end}}{{$u}}{{end}}</td>
+    <td><span title="{{fmtTime .CreatedAt}}">{{ago .CreatedAt}}</span></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="callout">
+  <h2>No applications yet</h2>
+  <p class="muted">Add your first application to let it sign users in with passkeys.</p>
+  <a class="button primary" href="/admin/clients/new">Add an application</a>
+</div>
+{{end}}
+{{template "admin_foot"}}

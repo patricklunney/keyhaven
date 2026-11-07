@@ -197,6 +197,7 @@ func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Info("passkey added", "user_id", u.ID)
+		s.audit(r, u, "passkey.add", "user", u.ID, u.Username, map[string]any{"name": name})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -226,6 +227,7 @@ func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("user registered", "user_id", u.ID)
+	s.audit(r, u, "user.register", "user", u.ID, u.Username, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -271,6 +273,7 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	if cred.Authenticator.CloneWarning {
 		// The signature counter went backwards: a cloned authenticator may exist.
 		s.log.Warn("passkey clone warning; rejecting login", "user_id", found.ID)
+		s.audit(r, found, "user.login_blocked", "user", found.ID, found.Username, map[string]any{"reason": "signature counter went backwards (possible cloned passkey)"})
 		s.jsonError(w, http.StatusForbidden, "This passkey failed a security check. Use another passkey.")
 		return
 	}
@@ -283,6 +286,7 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("user signed in", "user_id", found.ID)
+	s.audit(r, found, "user.login", "user", found.ID, found.Username, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

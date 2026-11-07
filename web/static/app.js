@@ -121,6 +121,24 @@ function guessDeviceName() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  // Copy-to-clipboard buttons in the admin console.
+  for (const btn of document.querySelectorAll("button[data-copy]")) {
+    btn.addEventListener("click", async () => {
+      const text = document.getElementById(btn.dataset.copy)?.textContent ?? "";
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = "Copied";
+      } catch (_) {
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById(btn.dataset.copy));
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        btn.textContent = "Selected – press ⌘C";
+      }
+      setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+    });
+  }
+
   const loginEl = document.getElementById("login");
   if (loginEl) {
     const btn = document.getElementById("login-btn");

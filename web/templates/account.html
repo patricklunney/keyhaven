@@ -1,0 +1,37 @@
+{{template "head" (printf "Your account · %s" .RP)}}
+<p class="brand">{{.RP}}</p>
+<h1>{{.User.DisplayName}}</h1>
+<p class="muted">Signed in as <strong>{{.User.Username}}</strong></p>
+
+{{if eq .Flash "removed"}}<p class="notice">Passkey removed.</p>{{end}}
+{{if eq .Flash "last"}}<p class="notice error">You can't remove your only passkey. Add another passkey first.</p>{{end}}
+
+<h2>Passkeys</h2>
+<ul class="passkeys">
+{{range .Passkeys}}
+  <li>
+    <div>
+      <strong>{{.Name}}</strong>
+      <span class="muted">Added {{.Created}}{{if .LastUsed}} · last used {{.LastUsed}}{{end}}{{if .Synced}} · synced{{end}}</span>
+    </div>
+    {{if $.CanDelete}}
+    <form method="post" action="/account/passkeys/delete">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button type="submit" class="link danger">Remove</button>
+    </form>
+    {{end}}
+  </li>
+{{end}}
+</ul>
+
+<div id="add-passkey">
+  <label for="passkey-name">New passkey name</label>
+  <input id="passkey-name" maxlength="64" placeholder="e.g. Work laptop">
+  <button type="button" id="add-btn">Add a passkey</button>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+</div>
+
+<form method="post" action="/logout" class="alt">
+  <button type="submit" class="link">Sign out</button>
+</form>
+{{template "foot"}}

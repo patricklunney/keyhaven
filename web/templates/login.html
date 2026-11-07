@@ -1,0 +1,14 @@
+{{template "head" (printf "Sign in · %s" .RP)}}
+<p class="brand">{{.RP}}</p>
+<h1>Sign in</h1>
+<p class="muted">Use the passkey saved on your device or security key. No password needed.</p>
+
+<div id="login" data-next="{{.Next}}">
+  <button type="button" id="login-btn" class="primary">Sign in with a passkey</button>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+</div>
+
+{{if .AllowSignup}}
+<p class="alt">New here? <a href="/register{{if .Req}}?req={{.Req}}{{end}}">Create an account</a></p>
+{{end}}
+{{template "foot"}}

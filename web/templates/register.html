@@ -1,0 +1,17 @@
+{{template "head" (printf "Create account · %s" .RP)}}
+<p class="brand">{{.RP}}</p>
+<h1>Create your account</h1>
+<p class="muted">Your device will create a passkey for this account and protect it with your fingerprint, face, PIN, or security key.</p>
+
+<form id="register" data-next="{{.Next}}" novalidate>
+  <label for="username">Username</label>
+  <input id="username" name="username" autocomplete="username webauthn" required minlength="3" maxlength="64"
+         pattern="[a-zA-Z0-9._@+\-]{3,64}" autocapitalize="none" spellcheck="false">
+  <label for="displayName">Display name <span class="muted">(optional)</span></label>
+  <input id="displayName" name="displayName" autocomplete="name" maxlength="64">
+  <button type="submit" class="primary">Create passkey</button>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+</form>
+
+<p class="alt">Already have an account? <a href="/login{{if .Req}}?req={{.Req}}{{end}}">Sign in</a></p>
+{{template "foot"}}

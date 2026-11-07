@@ -1,0 +1,29 @@
+# Local development: `docker compose up --build`, then open http://localhost:8080
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: keyhaven
+      POSTGRES_PASSWORD: keyhaven
+      POSTGRES_DB: keyhaven
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keyhaven"]
+      interval: 2s
+      retries: 20
+
+  keyhaven:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      KEYHAVEN_ISSUER: http://localhost:8080
+      KEYHAVEN_DEV: "true"          # allows http + an ephemeral signing key
+      KEYHAVEN_DATABASE_URL: postgres://keyhaven:keyhaven@db:5432/keyhaven?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

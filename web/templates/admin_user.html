@@ -5,6 +5,7 @@
 
 <dl class="kv">
   <dt>User ID (OIDC <code>sub</code>)</dt><dd><code>{{.User.ID}}</code></dd>
+  <dt>Email</dt><dd>{{with .User.Email}}{{.}} <span class="muted small">(not verified)</span>{{else}}<span class="muted">none yet. They'll be asked to add one at their next sign-in.</span>{{end}}</dd>
   <dt>Joined</dt><dd>{{fmtTime .User.CreatedAt}}</dd>
   <dt>Active sessions</dt><dd>{{.Sessions}}</dd>
 </dl>

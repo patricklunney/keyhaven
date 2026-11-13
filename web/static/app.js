@@ -167,11 +167,15 @@ document.addEventListener("DOMContentLoaded", () => {
         setStatus("Username must be 3–64 characters: letters, numbers and . _ @ + -", true);
         return;
       }
+      if (!regEl.email.checkValidity()) {
+        setStatus("Enter a valid email address, like name@example.com.", true);
+        return;
+      }
       const btn = regEl.querySelector("button");
       btn.disabled = true;
       setStatus("Follow the prompt to create your passkey…");
       try {
-        await register({ username, displayName: regEl.displayName.value.trim() }, guessDeviceName());
+        await register({ username, email: regEl.email.value.trim(), displayName: regEl.displayName.value.trim() }, guessDeviceName());
         setStatus("Account created. Redirecting…");
         window.location.assign(regEl.dataset.next);
       } catch (e) {

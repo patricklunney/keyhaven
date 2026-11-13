@@ -1,0 +1,35 @@
+{{template "admin_head" .}}
+<p class="crumbs"><a href="/admin/saml">SAML apps</a> /</p>
+<h1>{{.App.Name}}</h1>
+<p class="muted">SAML 2.0 service provider · added {{fmtTime .App.CreatedAt}}</p>
+
+{{if .IdP}}
+<section>
+  <h2>Keyhaven's SAML details</h2>
+  {{template "saml_idp" .IdP}}
+</section>
+{{end}}
+
+<section>
+  <h2>Settings</h2>
+  <form method="post" action="/admin/saml/{{.App.ID}}" class="form">
+    {{template "saml_app_fields" .}}
+    <div class="form-actions"><button type="submit" class="primary">Save changes</button></div>
+  </form>
+</section>
+
+<section class="danger-zone">
+  <h2>Delete SAML app</h2>
+  <p class="muted">The app immediately loses the ability to sign users in through Keyhaven.</p>
+  <form method="post" action="/admin/saml/{{.App.ID}}/delete" class="inline-form">
+    <label for="confirm-saml">Type <strong>{{.App.Name}}</strong> to confirm</label>
+    <input id="confirm-saml" name="confirm" autocomplete="off" required>
+    <button type="submit" class="danger-btn">Delete SAML app</button>
+  </form>
+</section>
+
+<section>
+  <h2>History</h2>
+  {{template "events" .Events}}
+</section>
+{{template "admin_foot"}}

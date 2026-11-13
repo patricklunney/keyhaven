@@ -1,0 +1,11 @@
+{{template "head" (printf "Signing you in · %s" .RP)}}
+<p class="brand">{{.RP}}</p>
+<h1>Signing you in…</h1>
+<form id="saml-post" method="post" action="{{.ACS}}">
+  <input type="hidden" name="SAMLResponse" value="{{.SAMLResponse}}">
+  {{if .RelayState}}<input type="hidden" name="RelayState" value="{{.RelayState}}">{{end}}
+  <p class="muted">If you aren't redirected automatically, continue below.</p>
+  <button type="submit" class="primary">Continue</button>
+</form>
+<script src="/static/saml-post.js"></script>
+{{template "foot"}}

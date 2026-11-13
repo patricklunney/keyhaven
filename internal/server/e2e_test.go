@@ -156,6 +156,7 @@ func newHarness(t *testing.T) *harness {
 		Issuer: base, RPID: "localhost", RPDisplayName: "Test", RPOrigins: []string{base},
 		DatabaseURL: dsn, AllowSignup: true, Dev: true,
 		SessionTTL: time.Hour, AccessTokenTTL: time.Minute, IDTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, AdminReauth: time.Hour,
+		SAMLKeyPEM: testSAMLBundle(t),
 	}
 	st, err := store.Open(ctx, dsn)
 	if err != nil {
@@ -294,13 +295,13 @@ func TestEndToEnd(t *testing.T) {
 
 	// 2. Register a new account with a passkey
 	auth := newAuthenticator("localhost", h.origin)
-	code, opts := h.postJSON(browser, "/webauthn/register/begin", map[string]string{"username": "alice", "displayName": "Alice Example"})
+	code, opts := h.postJSON(browser, "/webauthn/register/begin", map[string]string{"username": "alice", "email": "alice@example.com", "displayName": "Alice Example"})
 	mustStatus(t, code, 200, opts)
 	code, out := h.postJSON(browser, "/webauthn/register/finish?name=Laptop", auth.create(t, opts))
 	mustStatus(t, code, 200, out)
 
 	// Duplicate username is rejected
-	code, out = h.postJSON(h.browser(), "/webauthn/register/begin", map[string]string{"username": "ALICE"})
+	code, out = h.postJSON(h.browser(), "/webauthn/register/begin", map[string]string{"username": "ALICE", "email": "other-alice@example.com"})
 	mustStatus(t, code, 409, out)
 
 	// 3. Resume authorization → code
@@ -456,7 +457,7 @@ func out2(t *testing.T, h *harness, clientID, secret, refresh string, next *stri
 func (h *harness) register(c *http.Client, username string) *authenticator {
 	h.t.Helper()
 	a := newAuthenticator("localhost", h.origin)
-	code, opts := h.postJSON(c, "/webauthn/register/begin", map[string]string{"username": username})
+	code, opts := h.postJSON(c, "/webauthn/register/begin", map[string]string{"username": username, "email": username + "@example.com"})
 	mustStatus(h.t, code, 200, opts)
 	code, out := h.postJSON(c, "/webauthn/register/finish", a.create(h.t, opts))
 	mustStatus(h.t, code, 200, out)

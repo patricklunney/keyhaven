@@ -47,10 +47,10 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
     actions = ["secretsmanager:GetSecretValue"]
-    resources = [
+    resources = concat([
       aws_secretsmanager_secret.signing_key.arn,
       aws_db_instance.this.master_user_secret[0].secret_arn,
-    ]
+    ], aws_secretsmanager_secret.saml_key[*].arn)
   }
 }
 
@@ -80,11 +80,11 @@ locals {
     { name = "DB_NAME", value = aws_db_instance.this.db_name },
     { name = "DB_SSLMODE", value = "require" },
   ]
-  container_secrets = [
+  container_secrets = concat([
     { name = "KEYHAVEN_SIGNING_KEY", valueFrom = aws_secretsmanager_secret.signing_key.arn },
     { name = "DB_USER", valueFrom = "${local.db_secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${local.db_secret_arn}:password::" },
-  ]
+  ], [for s in aws_secretsmanager_secret.saml_key : { name = "KEYHAVEN_SAML_KEY", valueFrom = s.arn }])
 }
 
 resource "aws_ecs_task_definition" "app" {
@@ -107,11 +107,15 @@ resource "aws_ecs_task_definition" "app" {
     essential              = true
     command                = ["serve"]
     readonlyRootFilesystem = true
-    linuxParameters        = { capabilities = { drop = ["ALL"] } }
-    portMappings           = [{ containerPort = 8080, protocol = "tcp" }]
-    environment            = local.container_env
-    secrets                = local.container_secrets
-    stopTimeout            = 30
+    linuxParameters        = { capabilities = { add = [], drop = ["ALL"] } }
+    portMappings           = [{ containerPort = 8080, hostPort = 8080, protocol = "tcp" }]
+    # Spelled out as AWS stores them, so plans don't show a perpetual diff.
+    mountPoints    = []
+    volumesFrom    = []
+    systemControls = []
+    environment    = local.container_env
+    secrets        = local.container_secrets
+    stopTimeout    = 30
     # The image has no shell, so the binary checks itself. ECS uses this to
     # replace unhealthy tasks and to report health to Cloud Map (api_gateway ingress).
     healthCheck = {

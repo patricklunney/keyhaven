@@ -7,6 +7,8 @@
   <label for="username">Username</label>
   <input id="username" name="username" autocomplete="username webauthn" required minlength="3" maxlength="64"
          pattern="[a-zA-Z0-9._@+\-]{3,64}" autocapitalize="none" spellcheck="false">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" autocapitalize="none" spellcheck="false">
   <label for="displayName">Display name <span class="muted">(optional)</span></label>
   <input id="displayName" name="displayName" autocomplete="name" maxlength="64">
   <button type="submit" class="primary">Create passkey</button>

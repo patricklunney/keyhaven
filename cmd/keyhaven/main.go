@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/keyhaven/keyhaven/internal/config"
+	"github.com/keyhaven/keyhaven/internal/saml"
 	"github.com/keyhaven/keyhaven/internal/server"
 	"github.com/keyhaven/keyhaven/internal/store"
 	"github.com/keyhaven/keyhaven/internal/tokens"
@@ -28,6 +29,14 @@ Usage:
   keyhaven serve                       Run the HTTP server (applies migrations first)
   keyhaven migrate                     Apply database migrations and exit
   keyhaven genkey                      Print a new ES256 signing key (PEM)
+  keyhaven saml-keygen                 Print a new SAML signing key + certificate bundle (RSA-3072, PEM)
+  keyhaven saml-app create [flags]     Register a SAML service provider
+      --name NAME                      Display name (required)
+      --entity-id ID                   The app's SAML entity ID (required)
+      --acs-url URL                    Assertion Consumer Service URL (repeatable, required)
+      --name-id-format persistent|unspecified   (default persistent)
+  keyhaven saml-app list               List SAML apps
+  keyhaven saml-app delete ID          Delete a SAML app
   keyhaven healthcheck                 Exit 0 if the local server's /healthz is OK (container health checks)
   keyhaven client create [flags]       Register an OIDC client
       --name NAME                      Display name (required)
@@ -63,6 +72,13 @@ func main() {
 		if k, err = tokens.GenerateKeyPEM(); err == nil {
 			fmt.Print(k)
 		}
+	case "saml-keygen":
+		var b string
+		if b, err = saml.GenerateKeyBundle("Keyhaven SAML signing"); err == nil {
+			fmt.Print(b)
+		}
+	case "saml-app":
+		err = samlAppCmd(os.Args[2:])
 	case "client":
 		err = clientCmd(os.Args[2:])
 	case "user":
@@ -275,13 +291,17 @@ func userCmd(args []string) error {
 				return err
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tUSERNAME\tDISPLAY NAME\tADMIN\tPASSKEYS\tCREATED")
+			fmt.Fprintln(tw, "ID\tUSERNAME\tEMAIL\tDISPLAY NAME\tADMIN\tPASSKEYS\tCREATED")
 			for _, u := range us {
 				admin := ""
 				if u.IsAdmin {
 					admin = "yes"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n", u.ID, u.Username, u.DisplayName, admin, u.Passkeys, u.CreatedAt.Format(time.RFC3339))
+				email := u.Email
+				if email == "" {
+					email = "-"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", u.ID, u.Username, email, u.DisplayName, admin, u.Passkeys, u.CreatedAt.Format(time.RFC3339))
 			}
 			return tw.Flush()
 		})
@@ -331,13 +351,77 @@ func healthcheck() error {
 		addr = "127.0.0.1" + addr
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	res, err := client.Get("http://" + addr + "/healthz")
+	res, err := client.Get("http://" + addr + "/healthz") // #nosec G704 -- this container's own listen address (loopback by default), set by the operator
 	if err != nil {
 		return err
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("healthz returned %d", res.StatusCode)
 	}
 	return nil
+}
+
+func samlAppCmd(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: keyhaven saml-app create|list|delete")
+	}
+	switch args[0] {
+	case "create":
+		fs := flag.NewFlagSet("saml-app create", flag.ContinueOnError)
+		name := fs.String("name", "", "display name")
+		entityID := fs.String("entity-id", "", "the app's SAML entity ID")
+		format := fs.String("name-id-format", "persistent", "persistent or unspecified")
+		var acs multiFlag
+		fs.Var(&acs, "acs-url", "Assertion Consumer Service URL (repeatable)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *name == "" || len(acs) == 0 {
+			return errors.New("--name, --entity-id and at least one --acs-url are required")
+		}
+		if err := server.ValidateEntityID(*entityID); err != nil {
+			return err
+		}
+		urls, err := server.ParseACSURLs(strings.Join(acs, "\n"))
+		if err != nil {
+			return err
+		}
+		nameID := saml.NameIDPersistent
+		switch *format {
+		case "persistent":
+		case "unspecified":
+			nameID = saml.NameIDUnspecified
+		default:
+			return fmt.Errorf("--name-id-format must be persistent or unspecified")
+		}
+		return withStore(func(ctx context.Context, st *store.Store) error {
+			a, err := st.CreateSAMLApp(ctx, *name, *entityID, urls, nameID)
+			if err != nil {
+				return err
+			}
+			_ = st.AddAudit(ctx, store.AuditEvent{ActorName: "cli", Action: "admin.saml_app.create", TargetType: "saml_app", TargetID: a.ID, TargetName: a.Name})
+			fmt.Printf("SAML app %q registered (id %s)\nGive the app this metadata URL: <issuer>/saml/metadata\n", a.Name, a.ID)
+			return nil
+		})
+	case "list":
+		return withStore(func(ctx context.Context, st *store.Store) error {
+			apps, err := st.ListSAMLApps(ctx)
+			if err != nil {
+				return err
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tENTITY ID\tACS URLS")
+			for _, a := range apps {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.ID, a.Name, a.EntityID, strings.Join(a.ACSURLs, " "))
+			}
+			return tw.Flush()
+		})
+	case "delete":
+		if len(args) != 2 {
+			return errors.New("usage: keyhaven saml-app delete ID")
+		}
+		return withStore(func(ctx context.Context, st *store.Store) error { return st.DeleteSAMLApp(ctx, args[1]) })
+	}
+	return fmt.Errorf("unknown saml-app subcommand %q", args[0])
 }

@@ -1,0 +1,19 @@
+{{template "head" (printf "Your email · %s" .RP)}}
+<p class="brand">{{.RP}}</p>
+{{if .Required}}
+<h1>Add your email</h1>
+<p class="muted">An email address is now required on every account. Apps you sign in to receive it. You'll continue where you left off.</p>
+{{else}}
+<h1>Change your email</h1>
+<p class="muted">Apps you sign in to receive this address.</p>
+{{end}}
+
+<form method="post" action="/account/email" novalidate>
+  {{with .Error}}<p class="notice error" role="alert">{{.}}</p>{{end}}
+  <input type="hidden" name="next" value="{{.Next}}">
+  <label for="email">Email address</label>
+  <input id="email" name="email" type="email" value="{{.Email}}" autocomplete="email" required maxlength="254" autocapitalize="none" spellcheck="false">
+  <button type="submit" class="primary">{{if .Required}}Save and continue{{else}}Save{{end}}</button>
+</form>
+{{if not .Required}}<p class="alt"><a href="{{.Next}}">Cancel</a></p>{{end}}
+{{template "foot"}}

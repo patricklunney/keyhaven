@@ -39,6 +39,7 @@ type pendingUser struct {
 	Handle      []byte `json:"handle"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
 }
 
 func (s *Server) saveCeremony(w http.ResponseWriter, r *http.Request, c *ceremony) error {
@@ -111,6 +112,7 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Username    string `json:"username"`
 			DisplayName string `json:"displayName"`
+			Email       string `json:"email"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			s.jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -129,6 +131,21 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 			s.jsonError(w, http.StatusBadRequest, "Display name must be 64 characters or fewer.")
 			return
 		}
+		email, err := NormalizeEmail(body.Email)
+		if err != nil {
+			s.jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		emailTaken, err := s.store.EmailExists(ctx, email)
+		if err != nil {
+			s.log.Error("check email", "err", err)
+			s.jsonError(w, http.StatusInternalServerError, "server error")
+			return
+		}
+		if emailTaken {
+			s.jsonError(w, http.StatusConflict, "That email is already used by another account.")
+			return
+		}
 		taken, err := s.store.UsernameExists(ctx, body.Username)
 		if err != nil {
 			s.log.Error("check username", "err", err)
@@ -140,8 +157,9 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		u := store.NewUser(body.Username, body.DisplayName)
+		u.Email = email
 		user = u
-		c.NewUser = &pendingUser{ID: u.ID, Handle: u.Handle, Username: u.Username, DisplayName: u.DisplayName}
+		c.NewUser = &pendingUser{ID: u.ID, Handle: u.Handle, Username: u.Username, DisplayName: u.DisplayName, Email: email}
 	}
 
 	creation, session, err := s.wa.BeginRegistration(user, passkeyRegistrationOptions(user.WebAuthnCredentials())...)
@@ -206,7 +224,11 @@ func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		s.jsonError(w, http.StatusBadRequest, "invalid ceremony")
 		return
 	}
-	u := &store.User{ID: c.NewUser.ID, Handle: c.NewUser.Handle, Username: c.NewUser.Username, DisplayName: c.NewUser.DisplayName}
+	if c.NewUser.Email == "" {
+		s.jsonError(w, http.StatusBadRequest, "An email address is required.")
+		return
+	}
+	u := &store.User{ID: c.NewUser.ID, Handle: c.NewUser.Handle, Username: c.NewUser.Username, DisplayName: c.NewUser.DisplayName, Email: c.NewUser.Email}
 	cred, err := s.wa.FinishRegistration(u, c.Session, r)
 	if err != nil {
 		s.webauthnFailure(w, "finish registration", err)
@@ -215,6 +237,10 @@ func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.CreateUserWithCredential(ctx, u, cred, name); err != nil {
 		if errors.Is(err, store.ErrUsernameTaken) {
 			s.jsonError(w, http.StatusConflict, "That username is already taken.")
+			return
+		}
+		if errors.Is(err, store.ErrEmailTaken) {
+			s.jsonError(w, http.StatusConflict, "That email is already used by another account.")
 			return
 		}
 		s.log.Error("create user", "err", err)

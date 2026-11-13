@@ -30,6 +30,9 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	if n := r.URL.Query().Get("next"); req == "" && safeAdminPath(n) {
 		next = n
 	}
+	if sr := safeReq(r.URL.Query().Get("saml")); sr != "" && req == "" {
+		next = "/saml/continue?req=" + sr
+	}
 	s.render(w, http.StatusOK, "login.html", pageData{
 		RP: s.cfg.RPDisplayName, Req: req, AllowSignup: s.cfg.AllowSignup, Next: next,
 		Reauth: r.URL.Query().Get("reauth") == "1",
@@ -67,6 +70,9 @@ func (s *Server) handleAccountPage(w http.ResponseWriter, r *http.Request) {
 	sess := s.currentSession(r)
 	if sess == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	if !s.requireEmail(w, r, sess.UserID, "/account") {
 		return
 	}
 	u, err := s.store.GetUser(r.Context(), sess.UserID)

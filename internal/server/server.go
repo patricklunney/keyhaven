@@ -18,6 +18,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/keyhaven/keyhaven/internal/config"
+	"github.com/keyhaven/keyhaven/internal/saml"
 	"github.com/keyhaven/keyhaven/internal/store"
 	"github.com/keyhaven/keyhaven/internal/tokens"
 	"github.com/keyhaven/keyhaven/web"
@@ -30,6 +31,7 @@ type Server struct {
 	wa     *webauthn.WebAuthn
 	tmpl   *template.Template
 	log    *slog.Logger
+	saml   *saml.IdP // nil when SAML is disabled (no KEYHAVEN_SAML_KEY)
 }
 
 func New(cfg *config.Config, st *store.Store, signer *tokens.Signer, log *slog.Logger) (*Server, error) {
@@ -45,7 +47,15 @@ func New(cfg *config.Config, st *store.Store, signer *tokens.Signer, log *slog.L
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st, signer: signer, wa: wa, tmpl: tmpl, log: log}, nil
+	srv := &Server{cfg: cfg, store: st, signer: signer, wa: wa, tmpl: tmpl, log: log}
+	if cfg.SAMLKeyPEM != "" {
+		key, cert, err := saml.ParseKeyBundle(cfg.SAMLKeyPEM)
+		if err != nil {
+			return nil, err
+		}
+		srv.saml = &saml.IdP{EntityID: cfg.Issuer + "/saml", SSOURL: cfg.Issuer + "/saml/sso", Key: key, Cert: cert}
+	}
+	return srv, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -65,6 +75,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /userinfo", s.handleUserinfo)
 	mux.HandleFunc("GET /end_session", s.handleEndSession)
 
+	// SAML 2.0 identity provider (see saml.go); 404 unless KEYHAVEN_SAML_KEY is set
+	mux.HandleFunc("GET /saml/metadata", s.handleSAMLMetadata)
+	mux.HandleFunc("GET /saml/sso", s.handleSAMLSSO)
+	mux.HandleFunc("POST /saml/sso", s.handleSAMLSSO)
+	mux.HandleFunc("GET /saml/continue", s.handleSAMLContinue)
+
 	// FIDO2 / WebAuthn relying party (JSON API used by the pages)
 	mux.Handle("POST /webauthn/register/begin", s.sameOrigin(s.handleRegisterBegin))
 	mux.Handle("POST /webauthn/register/finish", s.sameOrigin(s.handleRegisterFinish))
@@ -77,6 +93,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /register", s.handleRegisterPage)
 	mux.HandleFunc("GET /account", s.handleAccountPage)
 	mux.Handle("POST /account/passkeys/delete", s.sameOrigin(s.handleDeletePasskey))
+	mux.HandleFunc("GET /account/email", s.handleEmailPage)
+	mux.Handle("POST /account/email", s.sameOrigin(s.handleSetEmail))
 	mux.Handle("POST /logout", s.sameOrigin(s.handleLogout))
 
 	// Admin console (administrators only; see admin.go)
@@ -95,6 +113,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /admin/clients/{id}/secret", s.adminPost(s.handleAdminRotateSecret))
 	mux.Handle("POST /admin/clients/{id}/delete", s.adminPost(s.handleAdminDeleteClient))
 	mux.Handle("GET /admin/audit", s.admin(s.handleAdminAudit))
+	mux.Handle("GET /admin/saml", s.admin(s.handleAdminSAMLApps))
+	mux.Handle("GET /admin/saml/new", s.admin(s.handleAdminNewSAMLApp))
+	mux.Handle("POST /admin/saml", s.adminPost(s.handleAdminCreateSAMLApp))
+	mux.Handle("GET /admin/saml/{id}", s.admin(s.handleAdminSAMLApp))
+	mux.Handle("POST /admin/saml/{id}", s.adminPost(s.handleAdminUpdateSAMLApp))
+	mux.Handle("POST /admin/saml/{id}/delete", s.adminPost(s.handleAdminDeleteSAMLApp))
 
 	return s.securityHeaders(s.logRequests(mux))
 }
@@ -114,6 +138,12 @@ var actionLabels = map[string]string{
 	"admin.client.update":        "Updated application",
 	"admin.client.rotate_secret": "Rotated secret of",
 	"admin.client.delete":        "Deleted application",
+	"admin.saml_app.create":      "Added SAML app",
+	"admin.saml_app.update":      "Updated SAML app",
+	"admin.saml_app.delete":      "Deleted SAML app",
+	"saml.sso":                   "Signed in to SAML app",
+	"user.email_set":             "Added an email",
+	"user.email_change":          "Changed their email",
 }
 
 var templateFuncs = template.FuncMap{
@@ -254,6 +284,7 @@ func (s *Server) cookieName(base string) string {
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge time.Duration) {
+	// #nosec G124 -- HttpOnly and SameSite are always set; Secure follows the issuer scheme (false only for an http:// dev issuer)
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName(name),
 		Value:    value,
@@ -266,6 +297,7 @@ func (s *Server) setCookie(w http.ResponseWriter, name, value string, maxAge tim
 }
 
 func (s *Server) clearCookie(w http.ResponseWriter, name string) {
+	// #nosec G124 -- deletion cookie; same attributes as setCookie
 	http.SetCookie(w, &http.Cookie{
 		Name: s.cookieName(name), Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: s.cfg.SecureCookies(), SameSite: http.SameSiteLaxMode,
@@ -365,7 +397,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	w.Write([]byte("ok")) //nolint:errcheck
+	_, _ = w.Write([]byte("ok"))
 }
 
 // safeReq returns a pending authorization request id only if it looks like one of ours.

@@ -48,6 +48,15 @@ resource "aws_db_instance" "this" {
 
 # ---------------------------------------------------------------- token signing key
 
+# RSA key + certificate for signing SAML assertions. Filled out-of-band by
+# `make saml-key`, so the key never appears in Terraform state.
+resource "aws_secretsmanager_secret" "saml_key" {
+  count                   = var.enable_saml ? 1 : 0
+  name                    = "${var.name}/saml-key"
+  description             = "RSA-3072 private key + certificate (PEM) used by Keyhaven to sign SAML assertions"
+  recovery_window_in_days = 7
+}
+
 resource "aws_secretsmanager_secret" "signing_key" {
   name                    = "${var.name}/signing-key"
   description             = "ES256 private key (PEM) used by Keyhaven to sign ID and access tokens"

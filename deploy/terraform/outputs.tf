@@ -16,6 +16,10 @@ output "service_name" {
   value = aws_ecs_service.app.name
 }
 
+output "saml_key_secret_arn" {
+  value = var.enable_saml ? aws_secretsmanager_secret.saml_key[0].arn : ""
+}
+
 output "signing_key_secret_arn" {
   value = aws_secretsmanager_secret.signing_key.arn
 }

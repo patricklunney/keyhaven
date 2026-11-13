@@ -1,4 +1,4 @@
-.PHONY: build test e2e run db db-stop admin tf-validate poc-pause poc-resume poc-status signing-key
+.PHONY: build test e2e run db db-stop admin tf-validate poc-pause poc-resume poc-status signing-key saml-key
 
 PG_BIN  ?= $(shell pg_config --bindir 2>/dev/null || echo /opt/homebrew/opt/postgresql@17/bin)
 DEV_DB  ?= postgres://postgres@localhost:55433/keyhaven?sslmode=disable
@@ -54,3 +54,7 @@ poc-status:
 # Generate the token-signing key straight into Secrets Manager (when generate_signing_key = false).
 signing-key:
 	scripts/signing-key.sh
+
+# Generate the SAML signing key + certificate straight into Secrets Manager (enable_saml = true).
+saml-key:
+	scripts/saml-key.sh

@@ -24,6 +24,10 @@ type Config struct {
 	// SigningKeyPEM is a PKCS#8 / SEC1 PEM encoded P-256 private key used to sign tokens.
 	SigningKeyPEM string
 
+	// SAMLKeyPEM is an RSA private key + certificate PEM bundle for signing SAML
+	// assertions (`keyhaven saml-keygen`). Empty disables SAML.
+	SAMLKeyPEM string
+
 	AllowSignup     bool
 	SessionTTL      time.Duration
 	AccessTokenTTL  time.Duration
@@ -47,6 +51,7 @@ func Load() (*Config, error) {
 		ListenAddr:      env("KEYHAVEN_LISTEN_ADDR", ":8080"),
 		RPDisplayName:   env("KEYHAVEN_RP_DISPLAY_NAME", "Keyhaven"),
 		SigningKeyPEM:   os.Getenv("KEYHAVEN_SIGNING_KEY"),
+		SAMLKeyPEM:      os.Getenv("KEYHAVEN_SAML_KEY"),
 		Dev:             envBool("KEYHAVEN_DEV", false),
 		AllowSignup:     envBool("KEYHAVEN_ALLOW_SIGNUP", true),
 		SessionTTL:      envDuration("KEYHAVEN_SESSION_TTL", 12*time.Hour),

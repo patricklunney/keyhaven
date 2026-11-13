@@ -1,0 +1,41 @@
+{{template "admin_head" .}}
+<div class="section-head">
+  <h1>SAML apps</h1>
+  {{if .IdP}}<a class="button primary" href="/admin/saml/new">Add a SAML app</a>{{end}}
+</div>
+<p class="muted">Applications that sign users in with SAML 2.0 instead of OpenID Connect.</p>
+
+{{if not .IdP}}
+<div class="callout">
+  <h2>SAML is turned off</h2>
+  <p class="muted">Set a SAML signing key to enable it: run <code>make saml-key</code> (or set <code>KEYHAVEN_SAML_KEY</code>) and redeploy.</p>
+</div>
+{{else}}
+<section>
+  <h2>Keyhaven's SAML details</h2>
+  <p class="muted">Paste these into the application's SAML / single sign-on settings.</p>
+  {{template "saml_idp" .IdP}}
+</section>
+
+<h2>Registered apps</h2>
+{{if .Apps}}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Name</th><th>Entity ID</th><th>ACS URLs</th><th>Created</th></tr></thead>
+  <tbody>
+  {{range .Apps}}
+  <tr>
+    <td><a href="/admin/saml/{{.ID}}"><strong>{{.Name}}</strong></a></td>
+    <td><code class="small">{{.EntityID}}</code></td>
+    <td class="small">{{range $i, $u := .ACSURLs}}{{if $i}}<br>{{end}}{{$u}}{{end}}</td>
+    <td><span title="{{fmtTime .CreatedAt}}">{{ago .CreatedAt}}</span></td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">No SAML apps yet.</p>
+{{end}}
+{{end}}
+{{template "admin_foot"}}

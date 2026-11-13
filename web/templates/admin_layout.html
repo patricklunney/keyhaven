@@ -15,6 +15,7 @@
   <nav aria-label="Admin">
     <a href="/admin" {{if eq .Nav "dashboard"}}aria-current="page"{{end}}>Dashboard</a>
     <a href="/admin/clients" {{if eq .Nav "clients"}}aria-current="page"{{end}}>Applications</a>
+    <a href="/admin/saml" {{if eq .Nav "saml"}}aria-current="page"{{end}}>SAML apps</a>
     <a href="/admin/users" {{if eq .Nav "users"}}aria-current="page"{{end}}>Users</a>
     <a href="/admin/audit" {{if eq .Nav "audit"}}aria-current="page"{{end}}>Audit log</a>
   </nav>
@@ -46,9 +47,10 @@
     <td>
       {{if isAdminAction .Action}}<span class="badge">admin</span>{{end}}
       {{actionLabel .Action}}
-      {{if and (isAdminAction .Action) .TargetName}}
+      {{if and (or (isAdminAction .Action) (eq .Action "saml.sso")) .TargetName}}
         {{if eq .TargetType "user"}}<a href="/admin/users/{{.TargetID}}">{{.TargetName}}</a>
         {{else if eq .TargetType "client"}}<a href="/admin/clients/{{.TargetID}}">{{.TargetName}}</a>
+        {{else if eq .TargetType "saml_app"}}<a href="/admin/saml/{{.TargetID}}">{{.TargetName}}</a>
         {{else}}{{.TargetName}}{{end}}
       {{end}}
     </td>
@@ -98,4 +100,31 @@
     logout <code>{{.Issuer}}/end_session</code>
   </dd>
 </dl>
+{{end}}
+
+{{define "saml_idp"}}
+<dl class="kv">
+  <dt>Metadata URL</dt><dd><code>{{.MetadataURL}}</code></dd>
+  <dt>IdP entity ID (issuer)</dt><dd><code>{{.EntityID}}</code></dd>
+  <dt>Single sign-on URL</dt><dd><code>{{.SSOURL}}</code> <span class="muted small">(HTTP-Redirect or HTTP-POST)</span></dd>
+  <dt>Signing certificate</dt><dd>RSA, SHA-256 fingerprint<br><code class="small">{{.Fingerprint}}</code><br><span class="muted small">Valid until {{fmtTime .Expires}}. Included in the metadata.</span></dd>
+  <dt>Sign-in type</dt><dd>Started by the app (SP-initiated) only</dd>
+</dl>
+{{end}}
+
+{{define "saml_app_fields"}}
+{{with .Form.Error}}<p class="notice error" role="alert">{{.}}</p>{{end}}
+<label for="name">Name</label>
+<input id="name" name="name" value="{{.Form.Name}}" required maxlength="100" placeholder="e.g. Test SAML app">
+<label for="entity_id">App entity ID</label>
+<input id="entity_id" name="entity_id" value="{{.Form.EntityID}}" required maxlength="1024" placeholder="https://app.example.com/saml/metadata" autocapitalize="none" spellcheck="false">
+<p class="hint">The app's own identifier (sometimes called Issuer or Audience). Requests from any other entity ID are refused.</p>
+<label for="acs_urls">Assertion Consumer Service (ACS) URLs</label>
+<textarea id="acs_urls" name="acs_urls" rows="3" required placeholder="https://app.example.com/saml/acs">{{.Form.ACSURLs}}</textarea>
+<p class="hint">One per line. Signed assertions are only ever sent to these exact URLs. https only, except <code>localhost</code>.</p>
+<label for="name_id_format">NameID (how the user is identified)</label>
+<select id="name_id_format" name="name_id_format">
+  {{range .Formats}}<option value="{{.Value}}" {{if eq .Value $.Form.NameIDFormat}}selected{{end}}>{{.Label}}</option>{{end}}
+</select>
+<p class="hint">Also sent as attributes: <code>uid</code>, <code>username</code>, <code>displayName</code>, <code>email</code> (if set).</p>
 {{end}}

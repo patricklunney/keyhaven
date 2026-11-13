@@ -15,6 +15,7 @@ AWS ALB/Cognito federation, Grafana, etc.).
 - Passkey registration and username-less (discoverable) sign-in
 - User verification required: the passkey is a full, phishing-resistant credential on its own
 - Multiple passkeys per account; add, list and remove them (removing the last one is blocked)
+- An email address is required on every account (unique, not verified). Accounts created before this rule are asked to add one at their next sign-in, before they continue to any app
 - Signature-counter clone detection (sign-in is rejected if a counter goes backwards)
 - Built on [`go-webauthn/webauthn`](https://github.com/go-webauthn/webauthn)
 
@@ -32,6 +33,11 @@ AWS ALB/Cognito federation, Grafana, etc.).
 - Browse and search all users, inspect their passkeys, sign them out everywhere, grant or remove admin, delete accounts
 - Dashboard with counts and recent activity, plus a filterable audit log of sign-ups, sign-ins and every admin action
 - Only administrators can get in, and they must have signed in with a passkey within the last hour. Every change is CSRF-protected, and the system refuses to remove its last administrator
+
+**SAML 2.0 identity provider** (optional)
+- SP-initiated web SSO for apps that speak SAML instead of OpenID Connect: HTTP-Redirect and HTTP-POST bindings, with the Response and Assertion both signed (RSA-SHA256)
+- Metadata at `/saml/metadata`; apps are managed in the admin console (**SAML apps**) or with `keyhaven saml-app`
+- NameID can be the persistent Keyhaven user ID or the username. The assertion also carries the attributes `uid`, `username`, `displayName` and `email`
 
 **Operations**
 - Stateless app tasks; all state lives in Postgres, so it scales out horizontally
@@ -154,6 +160,54 @@ invited, set `allow_signup = false` once your admins exist.
 
 Safeguards: admins can't delete or demote themselves, the last administrator can't be removed, and
 destructive actions require typing the user's or application's name to confirm.
+
+## SAML
+
+Keyhaven can also act as a SAML 2.0 identity provider. Sign-in is started by the app (SP-initiated), the
+user signs in with a passkey, and Keyhaven posts a signed assertion back to the app.
+
+**Enable it**
+```sh
+# terraform.tfvars: enable_saml = true
+terraform -chdir=deploy/terraform apply -target=aws_secretsmanager_secret.saml_key
+make saml-key            # RSA-3072 key + 10-year certificate, piped straight into Secrets Manager
+terraform -chdir=deploy/terraform apply
+```
+Locally, set `KEYHAVEN_SAML_KEY="$(go run ./cmd/keyhaven saml-keygen)"` before `make run`.
+
+**Register an app** under **Admin → SAML apps → Add a SAML app**, with its entity ID, ACS URL(s) and NameID
+format. Then give the app Keyhaven's metadata URL (`<issuer>/saml/metadata`), or its entity ID
+(`<issuer>/saml`), SSO URL (`<issuer>/saml/sso`) and certificate.
+
+**Try it with the bundled test app**
+```sh
+go run ./cmd/samltest-sp -idp https://id.example.com
+# register entity ID http://localhost:8091/saml/metadata, ACS http://localhost:8091/saml/acs
+open http://localhost:8091
+```
+The test app uses an independent SAML library (`gosaml2`) to verify Keyhaven's signature, audience and
+timing, then shows the NameID and attributes it received.
+
+**Security model**
+- **Trust comes from registration.** Assertions go only to an app's pre-registered entity ID and exact
+  ACS URLs (https, or http on localhost). Requests from unknown apps, for unregistered ACS URLs, addressed to
+  another IdP, older than 5 minutes, or asking for an unsupported binding are refused with an error page.
+  Keyhaven never posts to an unvalidated URL.
+- **Keyhaven only signs.** It never verifies untrusted XML signatures, which avoids the XML
+  signature-wrapping attack class. Signing uses `goxmldsig` v1.6.1, which includes the CVE-2026-33487 fix.
+  The `crewjam/saml` framework is deliberately not used (advisory GO-2026-6909, active release churn).
+- **Hardened parsing.** Every element is matched by its full namespace, DTDs are refused, and the request and
+  its inflated (DEFLATE) size are capped at 64 KB.
+- **Short-lived assertions.** Assertions last 5 minutes and are bound to the request (`InResponseTo`), the
+  ACS URL (`Recipient`) and the app (`Audience`). `ForceAuthn` requires a fresh passkey sign-in;
+  `IsPassive` gets a signed `NoPassive` failure instead of a login page.
+- **CSP.** The page that auto-posts the response may submit only to that app's ACS origin.
+- **Audit.** Every SAML sign-in and SAML app change is recorded.
+
+**Not supported (yet):** IdP-initiated SSO (it's off on purpose), Single Logout, encrypted assertions, signed
+AuthnRequests, and the artifact binding. With the HTTP-POST *request* binding, browsers don't send the
+`SameSite=Lax` session cookie on the cross-site POST, so users may be asked to sign in again; HTTP-Redirect
+apps reuse the existing session.
 
 ## Connect an application
 
@@ -339,7 +393,7 @@ a task restarts or deploys, and no WAF means no per-IP rate limit in front of si
 
 Not implemented yet. Contributions welcome:
 
-- Email capture and verification, SCIM provisioning
+- Email verification (email is required but not verified; apps get `email_verified: false`), SCIM provisioning
 - Signing-key rotation with multiple published keys
 - Back-channel logout, token revocation (RFC 7009) and introspection (RFC 7662) endpoints
 - Attestation verification against the FIDO Metadata Service (MDS3) to restrict authenticator models

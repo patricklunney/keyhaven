@@ -167,3 +167,9 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+variable "enable_saml" {
+  description = "Enable SAML 2.0 single sign-on. Create and fill the key first: terraform apply -target=aws_secretsmanager_secret.saml_key, then `make saml-key`."
+  type        = bool
+  default     = false
+}

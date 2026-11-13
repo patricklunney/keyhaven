@@ -1,0 +1,18 @@
+{{template "admin_head" .}}
+<p class="crumbs"><a href="/admin/saml">SAML apps</a> /</p>
+<h1>Add a SAML app</h1>
+
+<form method="post" action="/admin/saml" class="form">
+  {{template "saml_app_fields" .}}
+  <div class="form-actions">
+    <button type="submit" class="primary">Add SAML app</button>
+    <a href="/admin/saml">Cancel</a>
+  </div>
+</form>
+{{if .IdP}}
+<section>
+  <h2>Then give the app these details</h2>
+  {{template "saml_idp" .IdP}}
+</section>
+{{end}}
+{{template "admin_foot"}}

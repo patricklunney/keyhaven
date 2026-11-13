@@ -3,7 +3,7 @@
 
 <form class="search" method="get" action="/admin/users" role="search">
   <label for="q" class="visually-hidden">Search users</label>
-  <input id="q" name="q" value="{{.Q}}" placeholder="Search by username or name" autocomplete="off">
+  <input id="q" name="q" value="{{.Q}}" placeholder="Search by username, name or email" autocomplete="off">
   <button type="submit">Search</button>
   {{if .Q}}<a href="/admin/users">Clear</a>{{end}}
 </form>
@@ -15,7 +15,7 @@
   <tbody>
   {{range .Users}}
   <tr>
-    <td><a href="/admin/users/{{.ID}}"><strong>{{.DisplayName}}</strong></a><br><span class="muted small">@{{.Username}}</span></td>
+    <td><a href="/admin/users/{{.ID}}"><strong>{{.DisplayName}}</strong></a><br><span class="muted small">@{{.Username}}{{with .Email}} · {{.}}{{else}} · no email yet{{end}}</span></td>
     <td>{{if .IsAdmin}}<span class="badge">admin</span>{{else}}<span class="muted">user</span>{{end}}</td>
     <td class="num">{{.Passkeys}}</td>
     <td>{{with .LastSeen}}<span title="{{fmtTime .}}">{{ago .}}</span>{{else}}<span class="muted">never</span>{{end}}</td>

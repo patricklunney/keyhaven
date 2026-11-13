@@ -2,6 +2,7 @@
 <p class="brand">{{.RP}}</p>
 <h1>{{.User.DisplayName}}</h1>
 <p class="muted">Signed in as <strong>{{.User.Username}}</strong>{{if .IsAdmin}} · <a href="/admin">Admin console</a>{{end}}</p>
+<p class="muted">Email: <strong>{{.User.Email}}</strong> · <a href="/account/email?next=/account">Change</a></p>
 
 {{if eq .Flash "removed"}}<p class="notice">Passkey removed.</p>{{end}}
 {{if eq .Flash "last"}}<p class="notice error">You can't remove your only passkey. Add another passkey first.</p>{{end}}

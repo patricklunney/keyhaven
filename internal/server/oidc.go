@@ -161,10 +161,17 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 			fail("login_required", "the user is not signed in")
 			return
 		}
+		if u, err := s.store.GetUser(ctx, sess.UserID); err != nil || u.Email == "" {
+			fail("interaction_required", "the user must add an email address")
+			return
+		}
 		s.issueCode(w, r, &req, sess)
 		return
 	}
 	if sess != nil && !req.ForceLogin {
+		if !s.requireEmail(w, r, sess.UserID, r.URL.RequestURI()) {
+			return
+		}
 		s.issueCode(w, r, &req, sess)
 		return
 	}
@@ -189,6 +196,9 @@ func (s *Server) handleAuthorizeContinue(w http.ResponseWriter, r *http.Request)
 	sess := s.currentSession(r)
 	if sess == nil || (req.ForceLogin && sess.CreatedAt.Before(req.CreatedAt)) {
 		http.Redirect(w, r, "/login?req="+url.QueryEscape(key), http.StatusFound)
+		return
+	}
+	if !s.requireEmail(w, r, sess.UserID, r.URL.RequestURI()) {
 		return
 	}
 	if err := s.store.TakeEphemeral(ctx, kindAuthRequest, key, &req); err != nil {
@@ -242,6 +252,27 @@ func (s *Server) tokenError(w http.ResponseWriter, status int, code, desc string
 	writeJSON(w, status, map[string]string{"error": code, "error_description": desc})
 }
 
+// allowClientOrigin lets a browser-based (public) client read the token
+// response cross-origin, but only from an origin it registered a redirect URI
+// for. No cookies are involved, so credentials are never allowed.
+func allowClientOrigin(w http.ResponseWriter, r *http.Request, client *store.Client) {
+	w.Header().Add("Vary", "Origin")
+	origin := r.Header.Get("Origin")
+	if origin == "" || !client.Public() {
+		return
+	}
+	for _, uri := range client.RedirectURIs {
+		u, err := url.Parse(uri)
+		if err != nil || u.Host == "" {
+			continue
+		}
+		if origin == u.Scheme+"://"+u.Host {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			return
+		}
+	}
+}
+
 // authenticateClient supports client_secret_basic, client_secret_post and none (public + PKCE).
 func (s *Server) authenticateClient(r *http.Request) (*store.Client, bool) {
 	id, secret, basic := r.BasicAuth()
@@ -284,6 +315,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		s.tokenError(w, http.StatusUnauthorized, "invalid_client", "client authentication failed")
 		return
 	}
+	allowClientOrigin(w, r, client)
 	switch r.PostForm.Get("grant_type") {
 	case "authorization_code":
 		s.grantAuthorizationCode(w, r, client)
@@ -471,6 +503,7 @@ func (s *Server) handleEndSession(w http.ResponseWriter, r *http.Request) {
 				v.Set("state", st)
 				u.RawQuery = v.Encode()
 			}
+			// #nosec G710 -- target is one of this client's pre-registered post-logout redirect URIs (checked above)
 			http.Redirect(w, r, u.String(), http.StatusFound)
 			return
 		}

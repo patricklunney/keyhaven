@@ -44,6 +44,13 @@ func (s *Server) admin(h adminHandler) http.Handler {
 			http.Redirect(w, r, "/login?reauth=1&next="+url.QueryEscape(next), http.StatusSeeOther)
 			return
 		}
+		if me.Email == "" {
+			if r.Method != http.MethodGet {
+				next = "/admin"
+			}
+			http.Redirect(w, r, "/account/email?next="+url.QueryEscape(next), http.StatusSeeOther)
+			return
+		}
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 		h(w, r, me)
 	})
@@ -64,6 +71,8 @@ var flashMessages = map[string]string{
 	"passkey_removed":  "Passkey removed.",
 	"client_saved":     "Application saved.",
 	"client_deleted":   "Application deleted.",
+	"saml_saved":       "SAML app saved.",
+	"saml_deleted":     "SAML app deleted.",
 	"self_delete":      "You can't delete your own account from the admin console.",
 	"self_demote":      "You can't remove your own administrator role. Ask another administrator.",
 	"last_admin":       "At least one administrator is required.",

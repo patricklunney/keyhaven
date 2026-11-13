@@ -28,6 +28,7 @@ var migrationsFS embed.FS
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrUsernameTaken = errors.New("username already taken")
+	ErrEmailTaken    = errors.New("email already in use")
 	ErrLastPasskey   = errors.New("cannot remove the last passkey on an account")
 )
 
@@ -96,11 +97,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
-			tx.Rollback(ctx) //nolint:errcheck
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migration %s: %w", e.Name(), err)
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES ($1)`, version); err != nil {
-			tx.Rollback(ctx) //nolint:errcheck
+			_ = tx.Rollback(ctx)
 			return err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -142,6 +143,24 @@ func NewUser(username, displayName string) *User {
 	return &User{ID: RandomHex(16), Handle: RandomBytes(32), Username: username, DisplayName: displayName}
 }
 
+func (s *Store) EmailExists(ctx context.Context, email string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1))`, email).Scan(&exists)
+	return exists, err
+}
+
+// SetUserEmail sets (or changes) a user's email; ErrEmailTaken if another account uses it.
+func (s *Store) SetUserEmail(ctx context.Context, userID, email string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE users SET email=$2 WHERE id=$1`, userID, email)
+	if isUniqueViolation(err) {
+		return ErrEmailTaken
+	}
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
 func (s *Store) UsernameExists(ctx context.Context, username string) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower($1))`, username).Scan(&exists)
@@ -158,6 +177,9 @@ func (s *Store) CreateUserWithCredential(ctx context.Context, u *User, cred *web
 		_, err := tx.Exec(ctx, `INSERT INTO users (id, handle, username, display_name, email) VALUES ($1,$2,$3,$4,NULLIF($5,''))`,
 			u.ID, u.Handle, u.Username, u.DisplayName, u.Email)
 		if isUniqueViolation(err) {
+			if violatedConstraint(err) == "users_email_lower_idx" {
+				return ErrEmailTaken
+			}
 			return ErrUsernameTaken
 		}
 		if err != nil {
@@ -202,11 +224,11 @@ func (s *Store) getUser(ctx context.Context, q string, arg any) (*User, error) {
 }
 
 type UserSummary struct {
-	ID, Username, DisplayName string
-	IsAdmin                   bool
-	CreatedAt                 time.Time
-	LastSeen                  *time.Time // most recent passkey use
-	Passkeys                  int
+	ID, Username, DisplayName, Email string
+	IsAdmin                          bool
+	CreatedAt                        time.Time
+	LastSeen                         *time.Time // most recent passkey use
+	Passkeys                         int
 }
 
 // SearchUsers lists users matching q (username or display name, case-insensitive),
@@ -214,19 +236,19 @@ type UserSummary struct {
 func (s *Store) SearchUsers(ctx context.Context, q string, limit, offset int) ([]UserSummary, int, error) {
 	pattern := "%" + escapeLike(q) + "%"
 	var total int
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE username ILIKE $1 OR display_name ILIKE $1`, pattern).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE username ILIKE $1 OR display_name ILIKE $1 OR email ILIKE $1`, pattern).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT u.id, u.username, u.display_name, u.is_admin, u.created_at, max(c.last_used_at), count(c.id)
+	rows, err := s.pool.Query(ctx, `SELECT u.id, u.username, u.display_name, COALESCE(u.email,''), u.is_admin, u.created_at, max(c.last_used_at), count(c.id)
 		FROM users u LEFT JOIN credentials c ON c.user_id=u.id
-		WHERE u.username ILIKE $1 OR u.display_name ILIKE $1
+		WHERE u.username ILIKE $1 OR u.display_name ILIKE $1 OR u.email ILIKE $1
 		GROUP BY u.id ORDER BY u.created_at DESC LIMIT $2 OFFSET $3`, pattern, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	users, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (UserSummary, error) {
 		var u UserSummary
-		err := r.Scan(&u.ID, &u.Username, &u.DisplayName, &u.IsAdmin, &u.CreatedAt, &u.LastSeen, &u.Passkeys)
+		err := r.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.IsAdmin, &u.CreatedAt, &u.LastSeen, &u.Passkeys)
 		return u, err
 	})
 	return users, total, err
@@ -476,4 +498,12 @@ func hashKey(k string) []byte { return HashSecret(k) }
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func violatedConstraint(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.ConstraintName
+	}
+	return ""
 }

@@ -1,13 +1,14 @@
-# Keyhaven
+# Keyhaven: passkey identity provider for OpenID Connect and SAML
 
-An open source, **passkey-first identity provider**: a FIDO2 / WebAuthn server and an
-OpenID Connect provider in one small Go binary, with Terraform to run it on
-**AWS ECS Fargate**.
+An open source, **passkey-first identity provider**: a FIDO2 / WebAuthn server, an
+OpenID Connect provider and an optional SAML 2.0 identity provider in one small Go binary,
+with Terraform to run it on **AWS ECS Fargate**.
 
 Users sign up and sign in with passkeys only (Touch ID, Face ID, Windows Hello, Android,
 YubiKeys and other security keys). Your applications sign users in with standard OpenID Connect, so
 they work with any OIDC library (NextAuth/Auth.js, Spring Security, `oauth2-proxy`,
-AWS ALB/Cognito federation, Grafana, etc.).
+AWS ALB/Cognito federation, Grafana, etc.). Apps that only speak SAML can use the SAML 2.0
+endpoints instead.
 
 ## Features
 
